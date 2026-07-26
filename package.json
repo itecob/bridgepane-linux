@@ -1,0 +1,144 @@
+{
+  "name": "bridgepane-linux",
+  "version": "0.2.0-alpha.1",
+  "private": true,
+  "description": "An unofficial, security-focused Linux desktop client for ChatGPT and native Codex workflows.",
+  "main": "out/main/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron .",
+    "start:bridge": "node dist/src/index.js",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.desktop.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts desktop/test/*.test.ts desktop/test/*.test.tsx",
+    "smoke": "tsx scripts/smoke.ts",
+    "build:bridge": "tsc -p tsconfig.json",
+    "build:desktop": "electron-vite build",
+    "build": "npm run check && npm run build:bridge && npm run build:desktop",
+    "verify:release": "node scripts/validate-release.mjs",
+    "verify": "npm run check && npm test && npm run verify:release && npm run build",
+    "package": "npm run package:linux",
+    "package:linux": "npm run build && electron-builder --linux deb && electron-builder --linux rpm",
+    "package:deb": "npm run build && electron-builder --linux deb",
+    "package:rpm": "npm run build && electron-builder --linux rpm",
+    "package:appimage:experimental": "npm run build && electron-builder --linux AppImage",
+    "schema:generate": "codex app-server generate-ts --out src/generated/codex"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "ws": "^8.18.3",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/jsdom": "^28.0.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "jsdom": "^27.4.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.0.0"
+  },
+  "build": {
+    "appId": "io.github.itecob.BridgePane",
+    "productName": "BridgePane",
+    "artifactName": "bridgepane-linux-${version}-${arch}.${ext}",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "dist/src/**/*",
+      "package.json",
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "linux": {
+      "category": "Development",
+      "target": [
+        "deb",
+        "rpm"
+      ],
+      "maintainer": "BridgePane contributors",
+      "executableName": "bridgepane",
+      "icon": "build/icon.png",
+      "synopsis": "Unofficial ChatGPT and Codex desktop client",
+      "description": "An unofficial Linux desktop client combining an isolated ChatGPT web surface with the official Codex app-server protocol.",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "priority": "optional",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "bubblewrap"
+      ],
+      "recommends": [
+        "libappindicator3-1",
+        "apparmor-profiles",
+        "apparmor-utils"
+      ]
+    },
+    "rpm": {
+      "fpm": [
+        "--rpm-os",
+        "linux"
+      ],
+      "depends": [
+        "gtk3",
+        "libnotify",
+        "nss",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "bubblewrap"
+      ]
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": false
+    }
+  },
+  "author": "BridgePane contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/itecob/bridgepane-linux",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itecob/bridgepane-linux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/itecob/bridgepane-linux/issues"
+  },
+  "desktopName": "bridgepane.desktop"
+}

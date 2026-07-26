@@ -1,0 +1,17 @@
+node_modules/
+out/
+dist/
+release/
+coverage/
+.runtime/
+*.log
+*.AppImage
+*.deb
+*.rpm
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+*.swp
