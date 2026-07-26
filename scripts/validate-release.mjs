@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 const requiredFiles = [
   "LICENSE",
@@ -30,12 +30,30 @@ const targets = packageJson.build?.linux?.target ?? [];
 if (targets.includes("AppImage")) failures.push("AppImage must remain outside the default production targets");
 
 const sourceFiles = ["desktop", "src"];
-const { execFileSync } = await import("node:child_process");
+
+async function findForbiddenSandboxFlags(path) {
+  const matches = [];
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const childPath = `${path}/${entry.name}`;
+    if (entry.isDirectory()) {
+      matches.push(...await findForbiddenSandboxFlags(childPath));
+    } else if (entry.isFile()) {
+      const lines = (await readFile(childPath, "utf8")).split(/\r?\n/);
+      for (const [index, line] of lines.entries()) {
+        if (line.includes("--no-sandbox")) {
+          matches.push(`${childPath}:${index + 1}:${line}`);
+        }
+      }
+    }
+  }
+  return matches;
+}
+
 try {
-  const matches = execFileSync("rg", ["-n", "--fixed-strings", "--", "--no-sandbox", ...sourceFiles], { encoding: "utf8" });
-  if (matches.trim()) failures.push(`production source contains --no-sandbox:\n${matches}`);
-} catch (error) {
-  if (error.status !== 1) failures.push("could not scan production source for forbidden sandbox flags");
+  const matches = (await Promise.all(sourceFiles.map(findForbiddenSandboxFlags))).flat();
+  if (matches.length) failures.push(`production source contains --no-sandbox:\n${matches.join("\n")}`);
+} catch {
+  failures.push("could not scan production source for forbidden sandbox flags");
 }
 
 if (failures.length) {
