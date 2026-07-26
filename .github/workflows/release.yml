@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -45,13 +45,13 @@ jobs:
           subject-path: |
             release/*.deb
             release/*.rpm
-      - uses: actions/attest-sbom@v2
+      - uses: actions/attest-sbom@v4
         with:
           subject-path: |
             release/*.deb
             release/*.rpm
           sbom-path: release/sbom-${{ matrix.arch }}.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: |
@@ -65,7 +65,7 @@ jobs:
     needs: packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: linux-x64
           path: release
@@ -76,7 +76,7 @@ jobs:
       - name: Verify sandboxed desktop startup
         run: |
           set +e
-          timeout 12 xvfb-run -a codex-desktop
+          timeout 12 xvfb-run -a bridgepane
           status=$?
           test "$status" -eq 124
 
@@ -85,14 +85,14 @@ jobs:
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: linux-x64
           path: release
       - name: Install and query RPM package
         run: |
           dnf install -y ./release/*.rpm
-          rpm -q --info codex-desktop-linux
+          rpm -q --info bridgepane-linux
 
 
   publish:
@@ -100,7 +100,7 @@ jobs:
     needs: [packages, deb-install-smoke, rpm-install-smoke]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: linux-*
           merge-multiple: true
