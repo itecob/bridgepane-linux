@@ -18,7 +18,14 @@ const legalTransitions = {
 };
 const fullSha = /^[0-9a-f]{40}$/;
 const sha256 = /^[0-9a-f]{64}$/;
-const immutableUrl = /^https:\/\/github\.com\/[^/]+\/[^/]+\/(?:commit\/[0-9a-f]{40}|actions\/runs\/\d+(?:\/job\/\d+)?|pull\/\d+#(?:issuecomment|pullrequestreview)-\d+)$/;
+const repositoryUrlBase = "https://github.com/itecob/bridgepane-linux";
+const immutableUrl = /^https:\/\/github\.com\/itecob\/bridgepane-linux\/(?:commit\/[0-9a-f]{40}|actions\/runs\/\d+(?:\/job\/\d+)?|pull\/\d+#(?:issuecomment|pullrequestreview)-\d+)$/;
+const commitUrl = /^https:\/\/github\.com\/itecob\/bridgepane-linux\/commit\/([0-9a-f]{40})$/;
+const issueUrl = /^https:\/\/github\.com\/itecob\/bridgepane-linux\/issues\/\d+$/;
+const bootstrapBase = "350c48f042da85f54af058aafb03c06a189a55b2";
+const fixtureMode = process.env.PRODUCTION_PLAN_FIXTURE_MODE === "1"
+  && path.basename(process.cwd()).startsWith("bridgepane-plan-fixtures-")
+  && process.cwd().startsWith(tmpdir());
 const failures = [];
 const fail = (message) => failures.push(message);
 const requireArray = (value, label) => {
@@ -40,19 +47,47 @@ try {
 }
 
 let basePlan = null;
+let baseRevision = null;
 if (process.env.PRODUCTION_PLAN_BASE_FILE) {
   try {
     basePlan = JSON.parse(await readFile(process.env.PRODUCTION_PLAN_BASE_FILE, "utf8"));
+    baseRevision = "fixture-file";
   } catch (error) {
     console.error(`Could not load production-plan base file: ${error.message}`);
     process.exit(1);
   }
-} else if (process.env.PRODUCTION_PLAN_BASE_REF) {
+} else {
+  const candidate = process.env.PRODUCTION_PLAN_BASE_REF
+    || (process.env.GITHUB_EVENT_NAME === "pull_request" ? "HEAD^1" : "HEAD^");
   try {
-    basePlan = JSON.parse(execFileSync("git", ["show", `${process.env.PRODUCTION_PLAN_BASE_REF}:${planPath}`], { encoding: "utf8" }));
+    baseRevision = execFileSync("git", ["rev-parse", "--verify", `${candidate}^{commit}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    basePlan = JSON.parse(execFileSync("git", ["show", `${baseRevision}:${planPath}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
   } catch (error) {
-    console.error(`Could not load production-plan base ${process.env.PRODUCTION_PLAN_BASE_REF}: ${error.message}`);
-    process.exit(1);
+    if (fixtureMode) {
+      basePlan = null;
+      baseRevision = "fixture-bootstrap";
+    } else {
+      try {
+        baseRevision ||= execFileSync("git", ["rev-parse", "--verify", `${candidate}^{commit}`], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+      } catch {
+        console.error(`Could not resolve mandatory production-plan base ${candidate}`);
+        process.exit(1);
+      }
+      if (baseRevision !== bootstrapBase) {
+        console.error(`Could not load mandatory production-plan base ${baseRevision}:${planPath}`);
+        process.exit(1);
+      }
+      console.log(`Production-plan bootstrap exception: ${planPath} is absent from exact base ${bootstrapBase}.`);
+    }
   }
 }
 
@@ -62,8 +97,10 @@ if (plan.canonicalStatusSource !== planPath) fail(`canonicalStatusSource must be
 if (!/^\d{4}-\d{2}-\d{2}$/.test(plan.updated ?? "")) fail("updated must use YYYY-MM-DD");
 requireArray(plan.principles, "principles");
 if (plan.authorityModel?.soleHumanAuthority !== "itecob") fail("authorityModel must name itecob as sole human authority");
+if (JSON.stringify(plan.authorityModel?.requiredAgentRoles) !== JSON.stringify(["architect", "implementer", "verifier"])) fail("authorityModel.requiredAgentRoles must be exactly architect, implementer, verifier");
 if (plan.authorityModel?.agentReviewsAreHumanApproval !== false) fail("agent reviews must not be represented as human approval");
 if (plan.authorityModel?.ownerDecisionRequired !== true) fail("owner decisions must remain required");
+if (plan.authorityModel?.independentHumanReviewRequired !== false) fail("authorityModel must not claim a second human is required");
 
 const phases = Array.isArray(plan.phases) ? plan.phases : [];
 const items = Array.isArray(plan.workItems) ? plan.workItems : [];
@@ -85,6 +122,49 @@ for (const phase of phases) {
 }
 for (const [index, order] of [...phaseOrders].sort((a, b) => a - b).entries()) {
   if (order !== index) fail(`phase orders must be contiguous from zero; found ${order} at index ${index}`);
+}
+
+async function validateBoundDocument(document, label) {
+  if (!document || typeof document !== "object") {
+    fail(`${label} is missing`);
+    return;
+  }
+  if (!String(document.id ?? "").trim()) fail(`${label}.id is required`);
+  if (!fullSha.test(document.revision ?? "")) fail(`${label}.revision must be a full commit SHA`);
+  if (!localReference(document.path)) fail(`${label}.path is unsafe`);
+  if (!sha256.test(document.sha256 ?? "")) fail(`${label}.sha256 is invalid`);
+  if (!localReference(document.path) || !sha256.test(document.sha256 ?? "")) return;
+  try {
+    const working = await readFile(document.path);
+    const actual = createHash("sha256").update(working).digest("hex");
+    if (actual !== document.sha256) fail(`${label} working-tree digest does not match`);
+  } catch {
+    fail(`${label}.path cannot be read`);
+  }
+  if (!fixtureMode && fullSha.test(document.revision ?? "")) {
+    try {
+      const historical = execFileSync("git", ["show", `${document.revision}:${document.path}`], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const actual = createHash("sha256").update(historical).digest("hex");
+      if (actual !== document.sha256) fail(`${label} revision digest does not match`);
+    } catch {
+      fail(`${label} cannot be read at declared revision`);
+    }
+  }
+}
+
+function validateVerificationReview(review, label) {
+  if (!review || typeof review !== "object") {
+    fail(`${label} must be an object`);
+    return;
+  }
+  if (review.role !== "verifier-agent") fail(`${label}.role must be verifier-agent`);
+  if (!["accepted", "accepted_with_compensating_controls"].includes(review.decision)) {
+    fail(`${label}.decision must be accepted`);
+  }
+  if (!fullSha.test(review.reviewedCommit ?? "")) fail(`${label}.reviewedCommit must be a full commit SHA`);
+  if (!immutableUrl.test(review.url ?? "")) fail(`${label}.url must be immutable evidence from ${repositoryUrlBase}`);
 }
 
 const itemById = new Map();
@@ -111,20 +191,15 @@ for (const item of items) {
         fail(`${id} is active without ${role} request and response`);
         continue;
       }
-      if (!String(pair.request.id ?? "").trim() || !String(pair.request.revision ?? "").trim()) fail(`${id} ${role} request lacks id or revision`);
-      if (!localReference(pair.request.path) || !sha256.test(pair.request.sha256 ?? "")) fail(`${id} ${role} request has unsafe path or invalid digest`);
-      try {
-        const content = await readFile(pair.request.path);
-        const actual = createHash("sha256").update(content).digest("hex");
-        if (actual !== pair.request.sha256) fail(`${id} ${role} request digest does not match`);
-      } catch {
-        fail(`${id} ${role} request path cannot be read`);
-      }
-      if (!String(pair.response.id ?? "").trim() || !localReference(pair.response.path)) fail(`${id} ${role} response lacks id or safe path`);
+      await validateBoundDocument(pair.request, `${id}.${role}.request`);
+      await validateBoundDocument(pair.response, `${id}.${role}.response`);
       if (pair.response.requestRevision !== pair.request.revision) fail(`${id} ${role} response is bound to a stale request`);
       if (pair.response.decision !== "accepted") fail(`${id} ${role} response is not accepted`);
     }
     requireArray(item.verificationReviews, `${id}.verificationReviews`);
+    for (const [index, review] of (item.verificationReviews ?? []).entries()) {
+      validateVerificationReview(review, `${id}.verificationReviews[${index}]`);
+    }
     requireArray(item.independenceLimitations, `${id}.independenceLimitations`);
     if (!Array.isArray(item.residualRisks)) fail(`${id}.residualRisks must be an array`);
     const approval = item.authorityApproval;
@@ -146,7 +221,19 @@ for (const item of items) {
     }
     if (!fullSha.test(item.sourceCommit ?? "")) fail(`${id} is complete without an exact source commit`);
     requireArray(item.evidence, `${id}.evidence`);
-    if (!(item.evidence ?? []).some((entry) => immutableUrl.test(entry))) fail(`${id} is complete without immutable GitHub evidence`);
+    const sourceEvidence = (item.evidence ?? []).some((entry) => {
+      const match = typeof entry === "string" ? entry.match(commitUrl) : null;
+      return match?.[1] === item.sourceCommit;
+    });
+    if (!sourceEvidence) fail(`${id} is complete without exact source-commit evidence`);
+    const matchingReview = (item.verificationReviews ?? []).some((review) =>
+      review?.reviewedCommit === item.sourceCommit && immutableUrl.test(review?.url ?? "")
+    );
+    if (!matchingReview) fail(`${id} completion is not bound to a verifier review of sourceCommit`);
+    if (item.authorityApproval?.reviewedCommit !== item.sourceCommit
+      || !immutableUrl.test(item.authorityApproval?.url ?? "")) {
+      fail(`${id} completion is not bound to owner approval of sourceCommit`);
+    }
   } else {
     if (item.completedAt) fail(`${id} has completedAt while status is ${item.status}`);
     if (item.sourceCommit) fail(`${id} has sourceCommit while status is ${item.status}`);
@@ -202,10 +289,19 @@ if (basePlan) {
       }
     }
     if (active.has(base.status)) {
-      for (const role of ["architecture", "verification"]) {
-        const before = JSON.stringify(base.protocol?.[role]?.request);
-        const after = JSON.stringify(item.protocol?.[role]?.request);
-        if (before !== after) fail(`${item.id} mutates accepted ${role} request after activation`);
+      if (JSON.stringify(base.protocol) !== JSON.stringify(item.protocol)) {
+        fail(`${item.id} mutates accepted protocol after activation`);
+      }
+      for (const field of ["verificationReviews", "independenceLimitations", "residualRisks"]) {
+        for (const value of base[field] ?? []) {
+          if (!(item[field] ?? []).some((candidate) => JSON.stringify(candidate) === JSON.stringify(value))) {
+            fail(`${item.id} removes accepted ${field} after activation`);
+          }
+        }
+      }
+      if (item.status !== "complete"
+        && JSON.stringify(base.authorityApproval) !== JSON.stringify(item.authorityApproval)) {
+        fail(`${item.id} mutates owner authority approval before completion`);
       }
     }
   }
@@ -216,7 +312,7 @@ if (gov2Complete) {
   const seenIssues = new Set();
   for (const item of items) {
     const issue = item.issue;
-    if (!/^https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+$/.test(issue ?? "")) fail(`${item.id} lacks exactly one tracking issue`);
+    if (!issueUrl.test(issue ?? "")) fail(`${item.id} lacks exactly one repository tracking issue`);
     else if (seenIssues.has(issue)) fail(`${item.id} shares tracking issue ${issue}`);
     else seenIssues.add(issue);
   }
@@ -236,15 +332,29 @@ for (const item of items) {
 }
 
 for (const item of items) {
-  const paths = [
-    ...(active.has(item.status) ? (item.references ?? []).filter(localReference) : []),
-    ...(item.status === "complete" ? (item.evidence ?? []).filter(localReference) : []),
-  ];
-  for (const path of paths) {
+  for (const reference of item.references ?? []) {
+    if (!localReference(reference)) {
+      fail(`${item.id} has unsafe local reference ${String(reference)}`);
+      continue;
+    }
+    if (!active.has(item.status)) continue;
     try {
-      await access(path);
+      await access(reference);
     } catch {
-      fail(`${item.id} references missing local path ${path}`);
+      fail(`${item.id} references missing local path ${reference}`);
+    }
+  }
+  for (const evidence of item.evidence ?? []) {
+    if (immutableUrl.test(evidence ?? "")) continue;
+    if (!localReference(evidence)) {
+      fail(`${item.id} has unsafe or mutable evidence ${String(evidence)}`);
+      continue;
+    }
+    if (item.status !== "complete") continue;
+    try {
+      await access(evidence);
+    } catch {
+      fail(`${item.id} references missing local path ${evidence}`);
     }
   }
 }
@@ -291,6 +401,29 @@ async function runSelfTests() {
   const baseTarget = join(root, "base-plan.json");
   const originalPackage = JSON.parse(await readFile("package.json", "utf8"));
   const cases = [];
+  const bindCompletion = (item, source = "c".repeat(40)) => {
+    item.status = "complete";
+    item.reviewer = "verifier-agent";
+    item.completedAt = "2026-07-27";
+    item.sourceCommit = source;
+    item.evidence = [`https://github.com/itecob/bridgepane-linux/commit/${source}`];
+    item.verificationReviews = [
+      ...(item.verificationReviews ?? []),
+      {
+        role: "verifier-agent",
+        decision: "accepted",
+        reviewedCommit: source,
+        url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
+      },
+    ];
+    item.authorityApproval = {
+      owner: "itecob",
+      decision: "accepted",
+      date: "2026-07-27",
+      reviewedCommit: source,
+      url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
+    };
+  };
   try {
     await cp("docs/production-readiness", join(root, "docs", "production-readiness"), { recursive: true });
     await mkdir(join(root, "scripts"), { recursive: true });
@@ -302,7 +435,7 @@ async function runSelfTests() {
       mutate(candidate, packageJson, base);
       await writeFile(planTarget, `${JSON.stringify(candidate, null, 2)}\n`);
       await writeFile(packageTarget, `${JSON.stringify(packageJson, null, 2)}\n`);
-      const env = { ...process.env };
+      const env = { ...process.env, PRODUCTION_PLAN_FIXTURE_MODE: "1" };
       if (options.withBase) {
         await writeFile(baseTarget, `${JSON.stringify(base, null, 2)}\n`);
         env.PRODUCTION_PLAN_BASE_FILE = baseTarget;
@@ -316,11 +449,46 @@ async function runSelfTests() {
       }
       cases.push(name);
     };
+    const runSuccess = async (name, mutate) => {
+      const candidate = structuredClone(plan);
+      const base = structuredClone(plan);
+      const packageJson = structuredClone(originalPackage);
+      mutate(candidate, base);
+      await writeFile(planTarget, `${JSON.stringify(candidate, null, 2)}\n`);
+      await writeFile(baseTarget, `${JSON.stringify(base, null, 2)}\n`);
+      await writeFile(packageTarget, `${JSON.stringify(packageJson, null, 2)}\n`);
+      execFileSync(process.execPath, [scriptTarget], {
+        cwd: root,
+        env: { ...process.env, PRODUCTION_PLAN_BASE_FILE: baseTarget, PRODUCTION_PLAN_FIXTURE_MODE: "1" },
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+      cases.push(name);
+    };
     await runFailure("stable blocker", (_p, pkg) => { pkg.version = "1.0.0"; }, "stable while blockers remain");
     await runFailure("missing response", (p) => { delete p.workItems[0].protocol.architecture.response; }, "request and response");
     await runFailure("stale response", (p) => { p.workItems[0].protocol.verification.response.requestRevision = "stale"; }, "stale request");
     await runFailure("rejected response", (p) => { p.workItems[0].protocol.verification.response.decision = "rejected"; }, "response is not accepted");
-    await runFailure("mutated request", (p) => { p.workItems[0].protocol.architecture.request.revision = "changed"; p.workItems[0].protocol.architecture.response.requestRevision = "changed"; }, "mutates accepted architecture request", { withBase: true });
+    await runFailure("missing request", (p) => { delete p.workItems[0].protocol.verification.request; }, "request and response");
+    await runFailure("missing response file", (p) => { p.workItems[0].protocol.verification.response.path = "docs/missing-response.md"; }, "path cannot be read");
+    await runFailure("invalid request revision", (p) => { p.workItems[0].protocol.architecture.request.revision = "main"; }, "revision must be a full commit SHA");
+    await runFailure("invalid response revision", (p) => { p.workItems[0].protocol.architecture.response.revision = "main"; }, "revision must be a full commit SHA");
+    await runFailure("response digest mismatch", (p) => { p.workItems[0].protocol.architecture.response.sha256 = "0".repeat(64); }, "working-tree digest does not match");
+    await runFailure("null verifier review", (p) => { p.workItems[0].verificationReviews = [null]; }, "must be an object");
+    await runFailure("wrong verifier role", (p) => { p.workItems[0].verificationReviews[0].role = "architect"; }, "role must be verifier-agent");
+    await runFailure("foreign verifier evidence", (p) => { p.workItems[0].verificationReviews[0].url = "https://github.com/o/r/commit/" + "a".repeat(40); }, "url must be immutable evidence");
+    await runFailure("false human approval setting", (p) => { p.authorityModel.agentReviewsAreHumanApproval = true; }, "must not be represented as human approval");
+    await runFailure("false owner decision setting", (p) => { p.authorityModel.ownerDecisionRequired = false; }, "owner decisions must remain required");
+    await runFailure("false second-human setting", (p) => { p.authorityModel.independentHumanReviewRequired = true; }, "must not claim a second human");
+    await runFailure("wrong agent roles", (p) => { p.authorityModel.requiredAgentRoles = ["implementer"]; }, "must be exactly architect");
+    await runFailure("completion missing source evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["https://github.com/itecob/bridgepane-linux/actions/runs/1"]; }, "without exact source-commit evidence");
+    await runFailure("completion mismatched review", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].verificationReviews.at(-1).reviewedCommit = "d".repeat(40); }, "not bound to a verifier review");
+    await runFailure("completion mismatched approval", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].authorityApproval.reviewedCommit = "d".repeat(40); }, "not bound to owner approval");
+    await runFailure("completion malformed evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence.push("../evidence"); }, "unsafe or mutable evidence");
+    await runFailure("completion foreign evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["https://github.com/o/r/commit/" + "c".repeat(40)]; }, "unsafe or mutable evidence");
+    await runFailure("mutated request", (p) => { p.workItems[0].protocol.architecture.request.revision = "changed"; p.workItems[0].protocol.architecture.response.requestRevision = "changed"; }, "mutates accepted protocol", { withBase: true });
+    await runFailure("removed verifier record", (p) => { p.workItems[0].verificationReviews = []; }, "removes accepted verificationReviews", { withBase: true });
+    await runFailure("mutated owner approval", (p) => { p.workItems[0].authorityApproval.date = "2026-07-27"; }, "mutates owner authority approval", { withBase: true });
     await runFailure("unknown dependency", (p) => { p.workItems[0].dependsOn = ["BAD-999"]; }, "unknown dependency");
     await runFailure("self dependency", (p) => { p.workItems[0].dependsOn = ["CTL-001"]; }, "depends on itself");
     await runFailure("dependency cycle", (p) => { p.workItems[0].dependsOn = ["HK-001"]; p.workItems[1].dependsOn = ["CTL-001"]; }, "dependency cycle includes");
@@ -336,8 +504,12 @@ async function runSelfTests() {
     await runFailure("duplicate phase order", (p) => { p.phases[1].order = 0; }, "duplicate phase order");
     await runFailure("missing local reference", (p) => { p.workItems[0].references = ["docs/missing.md"]; }, "references missing local path");
     await runFailure("missing local evidence", (p) => { p.workItems[0].status = "complete"; p.workItems[0].reviewer = "verifier-agent"; p.workItems[0].completedAt = "2026-07-27"; p.workItems[0].sourceCommit = "a".repeat(40); p.workItems[0].evidence = ["docs/missing-evidence.md", "https://github.com/o/r/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]; }, "references missing local path");
-    await runFailure("unsafe path", (p) => { p.workItems[0].references = ["../outside"]; p.workItems[0].protocol.architecture.request.path = "../outside"; }, "unsafe path");
-    await runFailure("GOV-002 issue gate", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; }, "lacks exactly one tracking issue");
+    await runFailure("unsafe path", (p) => { p.workItems[0].references = ["../outside"]; p.workItems[0].protocol.architecture.request.path = "../outside"; }, "is unsafe");
+    await runFailure("URL used as local reference", (p) => { p.workItems[0].references = ["https://example.com/doc"]; }, "unsafe local reference");
+    await runFailure("GOV-002 issue gate", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; }, "lacks exactly one repository tracking issue");
+    await runFailure("foreign issue URLs", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; p.workItems.forEach((item, index) => { item.issue = `https://github.com/o/r/issues/${index + 1}`; }); }, "repository tracking issue");
+    await runFailure("shared issue URL", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; p.workItems.forEach((item) => { item.issue = "https://github.com/itecob/bridgepane-linux/issues/1"; }); }, "shares tracking issue");
+    await runFailure("earlier-phase blocker gate", (p) => { p.workItems.find(({ id }) => id === "SEC-001").status = "ready"; }, "ahead of earlier blockers");
     const workflowCases = [
       ["mutable Action", "uses: actions/checkout@v4", {}, "mutable Action reference"],
       ["privileged PR", "permissions:\n  contents: write", { pullRequest: true }, "privileged capability"],
@@ -348,13 +520,25 @@ async function runSelfTests() {
       if (!output.some((message) => message.includes(expected))) throw new Error(`${name}: fixture unexpectedly passed`);
       cases.push(name);
     }
-    await writeFile(planTarget, `${JSON.stringify(plan, null, 2)}\n`);
-    await writeFile(packageTarget, `${JSON.stringify(originalPackage, null, 2)}\n`);
-    const legalBase = structuredClone(plan);
-    legalBase.workItems[0].status = "in_progress";
-    await writeFile(baseTarget, `${JSON.stringify(legalBase, null, 2)}\n`);
-    execFileSync(process.execPath, [scriptTarget], { cwd: root, env: { ...process.env, PRODUCTION_PLAN_BASE_FILE: baseTarget }, encoding: "utf8" });
-    cases.push("legal transition");
+    for (const [before, afterSet] of Object.entries(legalTransitions)) {
+      for (const after of afterSet) {
+        await runSuccess(`legal transition ${before} -> ${after}`, (candidate, base) => {
+          candidate.workItems = [candidate.workItems[0]];
+          base.workItems = [base.workItems[0]];
+          const currentItem = candidate.workItems[0];
+          const baseItem = base.workItems[0];
+          baseItem.status = before;
+          currentItem.status = after;
+          if (before === "blocked") baseItem.blocker = "fixture blocker";
+          if (after === "blocked") currentItem.blocker = "fixture blocker";
+          if (after === "complete") bindCompletion(currentItem);
+          else {
+            currentItem.completedAt = null;
+            currentItem.sourceCommit = null;
+          }
+        });
+      }
+    }
 
     const completePlan = structuredClone(plan);
     const ctl = completePlan.workItems[0];
@@ -365,19 +549,32 @@ async function runSelfTests() {
       item.completedAt = "2026-07-27";
       item.sourceCommit = "c".repeat(40);
       item.references = ["docs/production-readiness/README.md"];
-      item.evidence = ["https://github.com/o/r/commit/cccccccccccccccccccccccccccccccccccccccc"];
+      item.evidence = [
+        "https://github.com/itecob/bridgepane-linux/commit/cccccccccccccccccccccccccccccccccccccccc",
+      ];
       item.protocol = structuredClone(ctl.protocol);
-      item.verificationReviews = structuredClone(ctl.verificationReviews);
-      item.authorityApproval = structuredClone(ctl.authorityApproval);
+      item.verificationReviews = [{
+        role: "verifier-agent",
+        decision: "accepted",
+        reviewedCommit: "c".repeat(40),
+        url: "https://github.com/itecob/bridgepane-linux/commit/cccccccccccccccccccccccccccccccccccccccc",
+      }];
+      item.authorityApproval = {
+        owner: "itecob",
+        decision: "accepted",
+        date: "2026-07-27",
+        reviewedCommit: "c".repeat(40),
+        url: "https://github.com/itecob/bridgepane-linux/commit/cccccccccccccccccccccccccccccccccccccccc",
+      };
       item.independenceLimitations = structuredClone(ctl.independenceLimitations);
       item.residualRisks = [];
-      item.issue = `https://github.com/o/r/issues/${index + 1}`;
+      item.issue = `https://github.com/itecob/bridgepane-linux/issues/${index + 1}`;
     });
     const stablePackage = structuredClone(originalPackage);
     stablePackage.version = "1.0.0";
     await writeFile(planTarget, `${JSON.stringify(completePlan, null, 2)}\n`);
     await writeFile(packageTarget, `${JSON.stringify(stablePackage, null, 2)}\n`);
-    const stableEnv = { ...process.env };
+    const stableEnv = { ...process.env, PRODUCTION_PLAN_FIXTURE_MODE: "1" };
     delete stableEnv.PRODUCTION_PLAN_BASE_FILE;
     delete stableEnv.PRODUCTION_PLAN_BASE_REF;
     execFileSync(process.execPath, [scriptTarget], { cwd: root, env: stableEnv, encoding: "utf8" });

@@ -111,7 +111,9 @@
           },
           "response": {
             "id": "ARS-PH0-001",
+            "revision": "bc7548fad71534f3ef957f9d6395eb3f9222b1b4",
             "path": "docs/production-readiness/responses/architecture/PH0-control-plane.md",
+            "sha256": "7eebe01d9b47a80876cf69a9a27e519d3ac0c62a78c3170a3d67022efd4e40a0",
             "requestRevision": "622c43ded20b5b485be4ccd9c5b39e4bc5fbf72d",
             "decision": "accepted"
           }
@@ -125,7 +127,9 @@
           },
           "response": {
             "id": "VRS-PH0-001",
+            "revision": "bc7548fad71534f3ef957f9d6395eb3f9222b1b4",
             "path": "docs/production-readiness/responses/verification/PH0-control-plane.md",
+            "sha256": "c35c2abbfba93ebf4e0acc1f01d6f23f7dc0614717bfbcd7cc806360baec420f",
             "requestRevision": "622c43ded20b5b485be4ccd9c5b39e4bc5fbf72d",
             "decision": "accepted"
           }
@@ -135,7 +139,8 @@
         {
           "role": "verifier-agent",
           "decision": "accepted_with_compensating_controls",
-          "reviewedCommit": "380a45056a834f48505d0ba7ecd297a983ec9d2e"
+          "reviewedCommit": "380a45056a834f48505d0ba7ecd297a983ec9d2e",
+          "url": "https://github.com/itecob/bridgepane-linux/pull/9#issuecomment-5084007714"
         }
       ],
       "authorityApproval": {
@@ -229,7 +234,7 @@
         "Only deliberately allowed HTTPS links reach the system browser",
         "Regression tests cover subdomain, lookalike, encoded, redirect-chain, and non-HTTPS cases"
       ],
-      "evidenceRequired": ["Electron security tests", "Independent security review"],
+      "evidenceRequired": ["Electron security tests", "Separate verifier-agent security report"],
       "evidence": [],
       "references": ["desktop/main/index.ts", "desktop/main/security.ts", "docs/THREAT_MODEL.md"]
     },
@@ -249,7 +254,7 @@
         "Every privileged IPC request verifies WebContents, main frame, and exact renderer origin",
         "A remote or redirected document cannot inherit the privileged preload bridge"
       ],
-      "evidenceRequired": ["Negative Electron IPC tests", "Packaged-build test", "Independent security review"],
+      "evidenceRequired": ["Negative Electron IPC tests", "Packaged-build test", "Separate verifier-agent security report"],
       "evidence": [],
       "references": ["desktop/main/index.ts", "desktop/main/security.ts", "desktop/preload/index.ts"]
     },
@@ -269,7 +274,7 @@
         "API-key and injected-token login remain prohibited",
         "Unknown methods and malformed payloads have negative tests"
       ],
-      "evidenceRequired": ["RPC policy tests", "Threat-model update", "Independent security review"],
+      "evidenceRequired": ["RPC policy tests", "Threat-model update", "Separate verifier-agent security report"],
       "evidence": [],
       "references": ["desktop/main/index.ts", "src/policy.ts", "docs/THREAT_MODEL.md"]
     },
@@ -502,7 +507,7 @@
       "dependsOn": ["BLD-001"],
       "controls": ["SSDF-PW.4", "SSDF-PW.6", "SSDF-RV.1"],
       "acceptanceCriteria": [
-        "DR-001 is closed by a fixed dependency graph or independently accepted for a short explicit period",
+        "DR-001 is closed by a fixed dependency graph or explicitly accepted by the sole owner for a short recorded period",
         "No unresolved high or critical runtime vulnerability exists",
         "Unused runtime dependencies and unsupported packaged bridge code are removed",
         "Node engine and type definitions match the tested minimum runtime"
@@ -649,7 +654,7 @@
         "No artifact is rebuilt between qualification and publication",
         "A separate verifier-agent report and two explicit sole-owner release decisions are retained without claiming independent-human review"
       ],
-      "evidenceRequired": ["Release-candidate manifest", "Full gate report", "Independent release approval"],
+      "evidenceRequired": ["Release-candidate manifest", "Full gate report", "Separate verifier-agent report and explicit sole-owner release approval"],
       "evidence": [],
       "references": ["docs/RELEASING.md", ".github/workflows/release.yml"]
     },

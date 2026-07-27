@@ -80,12 +80,21 @@ completed item.
 
 `npm run verify:plan` validates the ledger and fails when:
 
+- the preceding ledger revision cannot be loaded automatically, except for the
+  exact recorded bootstrap commit;
 - identifiers, phases, owners, dependencies, or acceptance criteria are
   missing;
 - dependencies are unknown or cyclic;
 - work advances ahead of an incomplete blocking phase or dependency;
 - blocked work lacks a reason;
-- completed work lacks dated evidence and a separate verifier role;
+- an active item's architecture or verification request/response files are not
+  digest-bound to full source revisions;
+- accepted protocol, risk, approval, or verifier records are removed or
+  rewritten after activation;
+- references escape the repository or evidence uses a mutable or foreign
+  repository URL;
+- completed work is not bound to one exact source commit through its evidence,
+  separate verifier-agent decision, and sole-owner approval;
 - a stable package version is declared while a release blocker is incomplete;
 - required local policy or evidence files do not exist.
 
