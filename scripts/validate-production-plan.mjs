@@ -23,9 +23,12 @@ const immutableUrl = /^https:\/\/github\.com\/itecob\/bridgepane-linux\/(?:commi
 const commitUrl = /^https:\/\/github\.com\/itecob\/bridgepane-linux\/commit\/([0-9a-f]{40})$/;
 const issueUrl = /^https:\/\/github\.com\/itecob\/bridgepane-linux\/issues\/\d+$/;
 const bootstrapBase = "350c48f042da85f54af058aafb03c06a189a55b2";
+const insideFixtureTree = process.cwd().startsWith(tmpdir())
+  && process.cwd().split(path.sep).some((part) => part.startsWith("bridgepane-plan-fixtures-"));
 const fixtureMode = process.env.PRODUCTION_PLAN_FIXTURE_MODE === "1"
   && path.basename(process.cwd()).startsWith("bridgepane-plan-fixtures-")
-  && process.cwd().startsWith(tmpdir());
+  && insideFixtureTree;
+const syntheticGitMode = process.env.PRODUCTION_PLAN_SYNTHETIC_GIT_MODE === "1" && insideFixtureTree;
 const failures = [];
 const fail = (message) => failures.push(message);
 const requireArray = (value, label) => {
@@ -38,6 +41,111 @@ const localReference = (value) => {
   return normalized === value && normalized !== ".." && !normalized.startsWith("../");
 };
 
+const git = (args, options = {}) => execFileSync("git", args, {
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "pipe"],
+  ...options,
+}).trim();
+
+const resolveCommit = (revision, label) => {
+  try {
+    const resolved = git(["rev-parse", "--verify", `${revision}^{commit}`]);
+    if (!fullSha.test(resolved)) throw new Error("not a full SHA");
+    return resolved;
+  } catch {
+    throw new Error(`Could not resolve ${label} ${revision}`);
+  }
+};
+
+const readEvent = async () => {
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath) throw new Error("GitHub Actions requires GITHUB_EVENT_PATH");
+  try {
+    return JSON.parse(await readFile(eventPath, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not parse GitHub event payload: ${error.message}`);
+  }
+};
+
+async function selectBase() {
+  if (process.env.PRODUCTION_PLAN_BASE_FILE) {
+    if (!fixtureMode) throw new Error("PRODUCTION_PLAN_BASE_FILE is restricted to isolated fixtures");
+    return { mode: "fixture-file", source: process.env.PRODUCTION_PLAN_BASE_FILE, head: "fixture", revision: null };
+  }
+  if (fixtureMode) {
+    return { mode: "fixture-unbased", source: "isolated-self-test", head: "fixture", revision: null };
+  }
+  const head = resolveCommit("HEAD", "HEAD");
+  if (process.env.PRODUCTION_PLAN_BASE_REF) {
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error("PRODUCTION_PLAN_BASE_REF is prohibited in GitHub Actions");
+    }
+    if (!fullSha.test(process.env.PRODUCTION_PLAN_BASE_REF)) {
+      throw new Error("PRODUCTION_PLAN_BASE_REF must be a full 40-character commit SHA");
+    }
+    return {
+      mode: "explicit-diagnostic",
+      source: "PRODUCTION_PLAN_BASE_REF",
+      head,
+      revision: resolveCommit(process.env.PRODUCTION_PLAN_BASE_REF, "explicit production-plan base"),
+    };
+  }
+  if (process.env.GITHUB_ACTIONS === "true") {
+    const event = await readEvent();
+    const eventName = process.env.GITHUB_EVENT_NAME;
+    const parents = git(["rev-list", "--parents", "-n", "1", "HEAD"]).split(/\s+/).slice(1);
+    if (eventName === "pull_request") {
+      const eventBase = event?.pull_request?.base?.sha;
+      const eventHead = event?.pull_request?.head?.sha;
+      if (!fullSha.test(eventBase ?? "") || !fullSha.test(eventHead ?? "")) {
+        throw new Error("Pull-request event requires full base and head SHAs");
+      }
+      if (parents.length === 0) {
+        throw new Error("Pull-request base cannot be resolved from checkout history; fetch-depth must be at least 2");
+      }
+      if (parents.length !== 2) throw new Error(`Pull-request verification requires a two-parent merge checkout; found ${parents.length}`);
+      const resolvedBase = resolveCommit(eventBase, "pull-request event base");
+      const resolvedHead = resolveCommit(eventHead, "pull-request event head");
+      if (parents[0] !== resolvedBase || parents[1] !== resolvedHead) {
+        throw new Error("Pull-request event SHAs do not match merge checkout parents");
+      }
+      return { mode: "pull-request-merge", source: "event.pull_request.base.sha", head, revision: resolvedBase };
+    }
+    if (eventName === "push" && process.env.GITHUB_REF === "refs/heads/main") {
+      const before = event?.before;
+      if (!fullSha.test(before ?? "") || /^0{40}$/.test(before)) {
+        throw new Error("Main push event requires a full non-zero before SHA");
+      }
+      const resolvedBefore = resolveCommit(before, "push event before");
+      if (parents.length < 1 || parents[0] !== resolvedBefore) {
+        throw new Error("Main push before SHA does not match HEAD first parent");
+      }
+      return { mode: "main-push", source: "event.before", head, revision: resolvedBefore };
+    }
+    throw new Error(`Unsupported GitHub Actions event for plan validation: ${String(eventName)}`);
+  }
+  const mainRef = "refs/remotes/origin/main";
+  resolveCommit(mainRef, "local tracking ref");
+  let mergeBases;
+  try {
+    mergeBases = git(["merge-base", "--all", "HEAD", mainRef]).split(/\s+/).filter(Boolean);
+  } catch {
+    throw new Error(`Could not compute merge base of HEAD and ${mainRef}`);
+  }
+  if (mergeBases.length !== 1 || !fullSha.test(mergeBases[0])) {
+    throw new Error(`Expected exactly one merge base of HEAD and ${mainRef}; found ${mergeBases.length}`);
+  }
+  let revision = resolveCommit(mergeBases[0], "local merge base");
+  let source = mainRef;
+  if (revision === head) {
+    const parents = git(["rev-list", "--parents", "-n", "1", "HEAD"]).split(/\s+/).slice(1);
+    if (parents.length < 1) throw new Error("Cannot select a base for a root commit");
+    revision = resolveCommit(parents[0], "local main first parent");
+    source = "HEAD^1";
+  }
+  return { mode: "local-merge-base", source, head, revision };
+}
+
 let plan;
 try {
   plan = JSON.parse(await readFile(planPath, "utf8"));
@@ -47,46 +155,45 @@ try {
 }
 
 let basePlan = null;
-let baseRevision = null;
-if (process.env.PRODUCTION_PLAN_BASE_FILE) {
+let selection;
+try {
+  selection = await selectBase();
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+const baseRevision = selection.revision;
+console.log(`Production-plan base: mode=${selection.mode} source=${selection.source} head=${selection.head} base=${baseRevision ?? "fixture-file"}`);
+
+if (selection.mode === "fixture-file") {
   try {
     basePlan = JSON.parse(await readFile(process.env.PRODUCTION_PLAN_BASE_FILE, "utf8"));
-    baseRevision = "fixture-file";
   } catch (error) {
     console.error(`Could not load production-plan base file: ${error.message}`);
     process.exit(1);
   }
+} else if (fixtureMode && !baseRevision) {
+  basePlan = null;
 } else {
-  const candidate = process.env.PRODUCTION_PLAN_BASE_REF
-    || (process.env.GITHUB_EVENT_NAME === "pull_request" ? "HEAD^1" : "HEAD^");
+  let baseText = null;
   try {
-    baseRevision = execFileSync("git", ["rev-parse", "--verify", `${candidate}^{commit}`], {
+    baseText = execFileSync("git", ["show", `${baseRevision}:${planPath}`], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-    basePlan = JSON.parse(execFileSync("git", ["show", `${baseRevision}:${planPath}`], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }));
+    });
   } catch (error) {
-    if (fixtureMode) {
-      basePlan = null;
-      baseRevision = "fixture-bootstrap";
-    } else {
-      try {
-        baseRevision ||= execFileSync("git", ["rev-parse", "--verify", `${candidate}^{commit}`], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }).trim();
-      } catch {
-        console.error(`Could not resolve mandatory production-plan base ${candidate}`);
-        process.exit(1);
-      }
-      if (baseRevision !== bootstrapBase) {
-        console.error(`Could not load mandatory production-plan base ${baseRevision}:${planPath}`);
-        process.exit(1);
-      }
-      console.log(`Production-plan bootstrap exception: ${planPath} is absent from exact base ${bootstrapBase}.`);
+    if (baseRevision !== bootstrapBase) {
+      console.error(`Could not load mandatory production-plan base ${baseRevision}:${planPath}: ${error.message}`);
+      process.exit(1);
+    }
+    console.log(`Production-plan bootstrap exception: ${planPath} is absent from exact base ${bootstrapBase}.`);
+  }
+  if (baseText !== null) {
+    try {
+      basePlan = JSON.parse(baseText);
+    } catch (error) {
+      console.error(`Could not parse production-plan base ${baseRevision}:${planPath}: ${error.message}`);
+      process.exit(1);
     }
   }
 }
@@ -141,7 +248,7 @@ async function validateBoundDocument(document, label) {
   } catch {
     fail(`${label}.path cannot be read`);
   }
-  if (!fixtureMode && fullSha.test(document.revision ?? "")) {
+  if (!fixtureMode && !syntheticGitMode && fullSha.test(document.revision ?? "")) {
     try {
       const historical = execFileSync("git", ["show", `${document.revision}:${document.path}`], {
         stdio: ["ignore", "pipe", "pipe"],
@@ -424,6 +531,62 @@ async function runSelfTests() {
       url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
     };
   };
+  const cleanBaseEnv = () => {
+    const env = { ...process.env };
+    for (const key of [
+      "GITHUB_ACTIONS",
+      "GITHUB_EVENT_NAME",
+      "GITHUB_EVENT_PATH",
+      "GITHUB_REF",
+      "PRODUCTION_PLAN_BASE_FILE",
+      "PRODUCTION_PLAN_BASE_REF",
+      "PRODUCTION_PLAN_FIXTURE_MODE",
+      "PRODUCTION_PLAN_SYNTHETIC_GIT_MODE",
+    ]) delete env[key];
+    return env;
+  };
+  const gitIn = (cwd, args) => execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  const prepareGitRepo = async (name, initialPlan = plan) => {
+    const repo = join(root, name);
+    await cp("docs/production-readiness", join(repo, "docs", "production-readiness"), { recursive: true });
+    await mkdir(join(repo, "scripts"), { recursive: true });
+    await cp(new URL(import.meta.url), join(repo, "scripts", "validate-production-plan.mjs"));
+    await writeFile(join(repo, "docs", "production-readiness", "plan.json"), `${JSON.stringify(initialPlan, null, 2)}\n`);
+    await writeFile(join(repo, "package.json"), `${JSON.stringify(originalPackage, null, 2)}\n`);
+    gitIn(repo, ["init", "-b", "main"]);
+    gitIn(repo, ["config", "user.name", "BridgePane fixture"]);
+    gitIn(repo, ["config", "user.email", "fixture@bridgepane.invalid"]);
+    gitIn(repo, ["add", "."]);
+    gitIn(repo, ["commit", "-m", "base"]);
+    const base = gitIn(repo, ["rev-parse", "HEAD"]);
+    gitIn(repo, ["update-ref", "refs/remotes/origin/main", base]);
+    return { repo, base };
+  };
+  const syntheticEnv = () => ({
+    ...cleanBaseEnv(),
+    PRODUCTION_PLAN_SYNTHETIC_GIT_MODE: "1",
+  });
+  const runRepo = (repo, env = {}) => execFileSync(
+    process.execPath,
+    ["scripts/validate-production-plan.mjs"],
+    { cwd: repo, env: { ...syntheticEnv(), ...env }, encoding: "utf8", stdio: "pipe" },
+  );
+  const expectRepoFailure = (name, repo, expected, env = {}) => {
+    try {
+      runRepo(repo, env);
+      throw new Error(`${name}: validator unexpectedly passed`);
+    } catch (error) {
+      const output = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
+      if (!output.includes(expected)) {
+        throw new Error(`${name}: expected '${expected}', got '${output.trim()}'`);
+      }
+    }
+    cases.push(name);
+  };
   try {
     await cp("docs/production-readiness", join(root, "docs", "production-readiness"), { recursive: true });
     await mkdir(join(root, "scripts"), { recursive: true });
@@ -481,6 +644,10 @@ async function runSelfTests() {
     await runFailure("false owner decision setting", (p) => { p.authorityModel.ownerDecisionRequired = false; }, "owner decisions must remain required");
     await runFailure("false second-human setting", (p) => { p.authorityModel.independentHumanReviewRequired = true; }, "must not claim a second human");
     await runFailure("wrong agent roles", (p) => { p.authorityModel.requiredAgentRoles = ["implementer"]; }, "must be exactly architect");
+    await runFailure("completion missing date isolated", (p) => { bindCompletion(p.workItems[0]); delete p.workItems[0].completedAt; }, "without a YYYY-MM-DD completedAt value");
+    await runFailure("completion invalid source isolated", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].sourceCommit = "missing"; }, "without an exact source commit");
+    await runFailure("completion missing evidence isolated", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = []; }, "evidence must be a non-empty array");
+    await runFailure("completion missing immutable evidence isolated", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["docs/production-readiness/README.md"]; }, "without exact source-commit evidence");
     await runFailure("completion missing source evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["https://github.com/itecob/bridgepane-linux/actions/runs/1"]; }, "without exact source-commit evidence");
     await runFailure("completion mismatched review", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].verificationReviews.at(-1).reviewedCommit = "d".repeat(40); }, "not bound to a verifier review");
     await runFailure("completion mismatched approval", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].authorityApproval.reviewedCommit = "d".repeat(40); }, "not bound to owner approval");
@@ -579,6 +746,126 @@ async function runSelfTests() {
     delete stableEnv.PRODUCTION_PLAN_BASE_REF;
     execFileSync(process.execPath, [scriptTarget], { cwd: root, env: stableEnv, encoding: "utf8" });
     cases.push("complete stable release");
+
+    const localGraph = await prepareGitRepo("local-graph");
+    gitIn(localGraph.repo, ["switch", "-c", "feature"]);
+    gitIn(localGraph.repo, ["commit", "--allow-empty", "-m", "feature one"]);
+    gitIn(localGraph.repo, ["commit", "--allow-empty", "-m", "feature two"]);
+    const localOutput = runRepo(localGraph.repo);
+    if (!localOutput.includes(`mode=local-merge-base`) || !localOutput.includes(`base=${localGraph.base}`)) {
+      throw new Error(`local multi-commit base: wrong selection: ${localOutput}`);
+    }
+    cases.push("local multi-commit selects merge base");
+
+    const invalidOverrideEnv = { ...cleanBaseEnv(), PRODUCTION_PLAN_BASE_REF: "HEAD^" };
+    expectRepoFailure("invalid diagnostic override", localGraph.repo, "must be a full 40-character commit SHA", invalidOverrideEnv);
+    gitIn(localGraph.repo, ["update-ref", "-d", "refs/remotes/origin/main"]);
+    expectRepoFailure("missing local origin main", localGraph.repo, "Could not resolve local tracking ref");
+
+    const prGraph = await prepareGitRepo("pull-request-graph");
+    gitIn(prGraph.repo, ["switch", "-c", "feature"]);
+    gitIn(prGraph.repo, ["commit", "--allow-empty", "-m", "feature"]);
+    const prHead = gitIn(prGraph.repo, ["rev-parse", "HEAD"]);
+    gitIn(prGraph.repo, ["switch", "main"]);
+    gitIn(prGraph.repo, ["merge", "--no-ff", "feature", "-m", "merge fixture"]);
+    const eventPath = join(prGraph.repo, "event.json");
+    await writeFile(eventPath, `${JSON.stringify({ pull_request: { base: { sha: prGraph.base }, head: { sha: prHead } } })}\n`);
+    const prEnv = {
+      ...cleanBaseEnv(),
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "pull_request",
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_REF: "refs/pull/1/merge",
+    };
+    const prOutput = runRepo(prGraph.repo, prEnv);
+    if (!prOutput.includes("mode=pull-request-merge") || !prOutput.includes(`base=${prGraph.base}`)) {
+      throw new Error(`pull-request merge base: wrong selection: ${prOutput}`);
+    }
+    cases.push("pull-request merge selects event base");
+
+    await writeFile(eventPath, `${JSON.stringify({ pull_request: { base: { sha: prHead }, head: { sha: prGraph.base } } })}\n`);
+    expectRepoFailure("pull-request parent mismatch", prGraph.repo, "do not match merge checkout parents", prEnv);
+    await writeFile(eventPath, "{malformed\n");
+    expectRepoFailure("malformed pull-request event", prGraph.repo, "Could not parse GitHub event payload", prEnv);
+    await writeFile(eventPath, `${JSON.stringify({ pull_request: { base: { sha: prGraph.base }, head: { sha: prHead } } })}\n`);
+
+    const shallowRepo = join(root, "shallow-pr");
+    execFileSync("git", ["clone", "--depth", "1", `file://${prGraph.repo}`, shallowRepo], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const shallowEvent = join(shallowRepo, "event.json");
+    await writeFile(shallowEvent, `${JSON.stringify({ pull_request: { base: { sha: prGraph.base }, head: { sha: prHead } } })}\n`);
+    expectRepoFailure("depth-one pull-request checkout", shallowRepo, "fetch-depth must be at least 2", {
+      ...cleanBaseEnv(),
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "pull_request",
+      GITHUB_EVENT_PATH: shallowEvent,
+      GITHUB_REF: "refs/pull/1/merge",
+    });
+    const missingEventEnv = { ...prEnv };
+    delete missingEventEnv.GITHUB_EVENT_PATH;
+    expectRepoFailure("missing pull-request event", prGraph.repo, "requires GITHUB_EVENT_PATH", missingEventEnv);
+    expectRepoFailure("CI diagnostic override prohibited", prGraph.repo, "is prohibited in GitHub Actions", {
+      ...prEnv,
+      PRODUCTION_PLAN_BASE_REF: prGraph.base,
+    });
+
+    await writeFile(eventPath, `${JSON.stringify({ before: prGraph.base })}\n`);
+    const pushEnv = {
+      ...cleanBaseEnv(),
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_REF: "refs/heads/main",
+    };
+    const pushOutput = runRepo(prGraph.repo, pushEnv);
+    if (!pushOutput.includes("mode=main-push") || !pushOutput.includes(`base=${prGraph.base}`)) {
+      throw new Error(`main push base: wrong selection: ${pushOutput}`);
+    }
+    cases.push("main push selects before SHA");
+
+    const missingLedger = await prepareGitRepo("missing-ledger");
+    gitIn(missingLedger.repo, ["rm", planPath]);
+    gitIn(missingLedger.repo, ["commit", "-m", "remove plan at base"]);
+    const missingLedgerBase = gitIn(missingLedger.repo, ["rev-parse", "HEAD"]);
+    gitIn(missingLedger.repo, ["update-ref", "refs/remotes/origin/main", missingLedgerBase]);
+    await writeFile(join(missingLedger.repo, planPath), `${JSON.stringify(plan, null, 2)}\n`);
+    gitIn(missingLedger.repo, ["add", planPath]);
+    gitIn(missingLedger.repo, ["commit", "-m", "restore candidate plan"]);
+    expectRepoFailure("missing non-bootstrap base ledger", missingLedger.repo, "Could not load mandatory production-plan base");
+
+    const invalidLedger = await prepareGitRepo("invalid-ledger");
+    await writeFile(join(invalidLedger.repo, planPath), "{invalid\n");
+    gitIn(invalidLedger.repo, ["add", planPath]);
+    gitIn(invalidLedger.repo, ["commit", "-m", "invalid plan at base"]);
+    const invalidLedgerBase = gitIn(invalidLedger.repo, ["rev-parse", "HEAD"]);
+    gitIn(invalidLedger.repo, ["update-ref", "refs/remotes/origin/main", invalidLedgerBase]);
+    await writeFile(join(invalidLedger.repo, planPath), `${JSON.stringify(plan, null, 2)}\n`);
+    gitIn(invalidLedger.repo, ["add", planPath]);
+    gitIn(invalidLedger.repo, ["commit", "-m", "valid candidate plan"]);
+    expectRepoFailure("invalid base ledger JSON", invalidLedger.repo, "Could not parse production-plan base");
+
+    const strengthened = structuredClone(plan);
+    strengthened.workItems[0].acceptanceCriteria.push("fixture criterion must remain");
+    const weakening = await prepareGitRepo("multi-commit-weakening", strengthened);
+    gitIn(weakening.repo, ["switch", "-c", "feature"]);
+    await writeFile(join(weakening.repo, planPath), `${JSON.stringify(plan, null, 2)}\n`);
+    gitIn(weakening.repo, ["add", planPath]);
+    gitIn(weakening.repo, ["commit", "-m", "weaken in first feature commit"]);
+    gitIn(weakening.repo, ["commit", "--allow-empty", "-m", "second feature commit"]);
+    expectRepoFailure("multi-commit weakening uses merge base", weakening.repo, "weakens acceptanceCriteria");
+
+    const ambiguous = await prepareGitRepo("ambiguous-merge-base");
+    const tree = gitIn(ambiguous.repo, ["rev-parse", "HEAD^{tree}"]);
+    const a1 = gitIn(ambiguous.repo, ["commit-tree", tree, "-p", ambiguous.base, "-m", "A1"]);
+    const b1 = gitIn(ambiguous.repo, ["commit-tree", tree, "-p", ambiguous.base, "-m", "B1"]);
+    const a2 = gitIn(ambiguous.repo, ["commit-tree", tree, "-p", a1, "-p", b1, "-m", "A2"]);
+    const b2 = gitIn(ambiguous.repo, ["commit-tree", tree, "-p", b1, "-p", a1, "-m", "B2"]);
+    gitIn(ambiguous.repo, ["update-ref", "refs/heads/feature", a2]);
+    gitIn(ambiguous.repo, ["update-ref", "refs/remotes/origin/main", b2]);
+    gitIn(ambiguous.repo, ["switch", "feature"]);
+    expectRepoFailure("ambiguous local merge base", ambiguous.repo, "Expected exactly one merge base");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
