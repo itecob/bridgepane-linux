@@ -1,0 +1,718 @@
+{
+  "schemaVersion": 2,
+  "program": "BridgePane production readiness",
+  "updated": "2026-07-26",
+  "productStage": "alpha",
+  "canonicalStatusSource": "docs/production-readiness/plan.json",
+  "authorityModel": {
+    "soleHumanAuthority": "itecob",
+    "requiredAgentRoles": [
+      "architect",
+      "implementer",
+      "verifier"
+    ],
+    "agentReviewsAreHumanApproval": false,
+    "ownerDecisionRequired": true,
+    "independentHumanReviewRequired": false
+  },
+  "principles": [
+    "fail_closed",
+    "least_privilege",
+    "evidence_before_completion",
+    "immutable_release_inputs",
+    "tested_artifact_equals_published_artifact",
+    "separate_verifier_agent_review_with_owner_authority",
+    "no_untested_architecture",
+    "no_silent_scope_reduction"
+  ],
+  "standards": {
+    "nistSsdf": "https://csrc.nist.gov/pubs/sp/800/218/final",
+    "slsaBuild": "https://slsa.dev/spec/v1.2/build-requirements",
+    "reproducibleBuilds": "https://reproducible-builds.org/docs/definition/",
+    "electronSecurity": "https://www.electronjs.org/docs/latest/tutorial/security"
+  },
+  "phases": [
+    {
+      "id": "PH0",
+      "order": 0,
+      "name": "Control plane and housekeeping",
+      "objective": "Establish one enforced plan, a clean baseline, and protected repository governance.",
+      "exitCriteria": "All PH0 release blockers are complete and every later item has an owner, dependency chain, acceptance criteria, and evidence requirement."
+    },
+    {
+      "id": "PH1",
+      "order": 1,
+      "name": "Security boundary",
+      "objective": "Close known navigation, IPC, command invocation, approval, and lifecycle defects.",
+      "exitCriteria": "All known exploitable boundary defects are fixed, regression-tested, reviewed by a separate verifier agent, and reflected in the threat model."
+    },
+    {
+      "id": "PH2",
+      "order": 2,
+      "name": "Runtime contract",
+      "objective": "Make sandbox enforcement and Codex compatibility explicit, bounded, and testable.",
+      "exitCriteria": "Unsupported or unsafe runtime states fail closed and every supported Codex version passes schema and real-flow tests."
+    },
+    {
+      "id": "PH3",
+      "order": 3,
+      "name": "Verification system",
+      "objective": "Build automated proof for application boundaries, behavior, accessibility, and supported environments.",
+      "exitCriteria": "Security-critical flows run in real Electron and the clean-machine matrix is automated or has a controlled evidence procedure."
+    },
+    {
+      "id": "PH4",
+      "order": 4,
+      "name": "Supply chain and deterministic build",
+      "objective": "Lock, record, reproduce, inspect, attest, and verify every released artifact.",
+      "exitCriteria": "Build inputs are immutable or recorded, package policy passes, and independent rebuild comparison is repeatable."
+    },
+    {
+      "id": "PH5",
+      "order": 5,
+      "name": "Release qualification",
+      "objective": "Qualify one release candidate across the entire supported matrix and operational lifecycle.",
+      "exitCriteria": "The release-candidate commit passes every security, compatibility, package, privacy, legal, update, rollback, and support gate."
+    },
+    {
+      "id": "PH6",
+      "order": 6,
+      "name": "Stable release and operations",
+      "objective": "Publish the already-qualified artifact and operate a sustainable vulnerability and update process.",
+      "exitCriteria": "Stable artifacts are verifiable, monitoring and response ownership are active, and a post-release review is recorded."
+    }
+  ],
+  "workItems": [
+    {
+      "id": "CTL-001",
+      "phase": "PH0",
+      "title": "Establish the canonical machine-validated readiness ledger",
+      "status": "complete",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": "verifier-agent",
+      "dependsOn": [],
+      "controls": ["SSDF-PO.1", "SSDF-PO.2"],
+      "acceptanceCriteria": [
+        "A single ledger defines phases, ownership, dependencies, status, acceptance, and evidence",
+        "A validator runs as part of npm run verify",
+        "Stable version declaration fails while release blockers remain incomplete"
+      ],
+      "evidenceRequired": ["Plan document", "Validator test output"],
+      "evidence": [
+        "docs/production-readiness/evidence/CTL-001.md",
+        "https://github.com/itecob/bridgepane-linux/commit/c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+        "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108216385",
+        "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108220994",
+        "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108830305",
+        "https://github.com/itecob/bridgepane-linux/actions/runs/30387395534/job/90370005688"
+      ],
+      "references": ["docs/production-readiness/README.md", "scripts/validate-production-plan.mjs"],
+      "protocol": {
+        "architecture": {
+          "request": {
+            "id": "AR-PH0-001",
+            "revision": "622c43ded20b5b485be4ccd9c5b39e4bc5fbf72d",
+            "path": "docs/production-readiness/requests/architecture/PH0-control-plane.md",
+            "sha256": "4cc6778b786025c40ebd27752211b34e68a01556fbafcd12c87c26e8d9aef3ea"
+          },
+          "response": {
+            "id": "ARS-PH0-001",
+            "revision": "bc7548fad71534f3ef957f9d6395eb3f9222b1b4",
+            "path": "docs/production-readiness/responses/architecture/PH0-control-plane.md",
+            "sha256": "7eebe01d9b47a80876cf69a9a27e519d3ac0c62a78c3170a3d67022efd4e40a0",
+            "requestRevision": "622c43ded20b5b485be4ccd9c5b39e4bc5fbf72d",
+            "decision": "accepted"
+          }
+        },
+        "verification": {
+          "request": {
+            "id": "VR-PH0-001",
+            "revision": "622c43ded20b5b485be4ccd9c5b39e4bc5fbf72d",
+            "path": "docs/production-readiness/requests/verification/PH0-control-plane.md",
+            "sha256": "bbbf764a4db659d1e411332212639919f99bd21ee27d006cba3403f402f3f291"
+          },
+          "response": {
+            "id": "VRS-PH0-001",
+            "revision": "bc7548fad71534f3ef957f9d6395eb3f9222b1b4",
+            "path": "docs/production-readiness/responses/verification/PH0-control-plane.md",
+            "sha256": "c35c2abbfba93ebf4e0acc1f01d6f23f7dc0614717bfbcd7cc806360baec420f",
+            "requestRevision": "622c43ded20b5b485be4ccd9c5b39e4bc5fbf72d",
+            "decision": "accepted"
+          }
+        }
+      },
+      "verificationReviews": [
+        {
+          "role": "verifier-agent",
+          "decision": "accepted_with_compensating_controls",
+          "reviewedCommit": "380a45056a834f48505d0ba7ecd297a983ec9d2e",
+          "url": "https://github.com/itecob/bridgepane-linux/pull/9#issuecomment-5084007714"
+        },
+        {
+          "role": "verifier-agent",
+          "decision": "accepted",
+          "reviewedCommit": "c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+          "url": "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108220994"
+        }
+      ],
+      "authorityApproval": {
+        "owner": "itecob",
+        "decision": "accepted",
+        "date": "2026-07-28",
+        "reviewedCommit": "c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+        "url": "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108830305"
+      },
+      "independenceLimitations": ["One human authority; agent roles do not constitute independent-human review"],
+      "residualRisks": [
+        "A compromised or unavailable sole-owner account can alter or halt governance",
+        "Full-history CI bandwidth, storage, and Git-object processing grow with reachable repository history"
+      ],
+      "deviation": "docs/production-readiness/deviations/CTL-001-pre-workflow.md",
+      "issue": null,
+      "sourceCommit": "c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+      "completedAt": "2026-07-28"
+    },
+    {
+      "id": "HK-001",
+      "phase": "PH0",
+      "title": "Reconcile the local branch, untracked handoff, and open dependency pull requests",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["CTL-001"],
+      "controls": ["SSDF-PS.1"],
+      "acceptanceCriteria": [
+        "The intended local commit is reviewed and pushed through a pull request or documented protected-branch exception",
+        "HANDOFF.md is deliberately committed, relocated, or removed without losing useful state",
+        "Pull request 6 is closed or replaced with compatible updates",
+        "Pull requests 7 and 8 are reviewed, tested, and resolved without weakening action pinning policy",
+        "git status is clean at the baseline commit"
+      ],
+      "evidenceRequired": ["Baseline commit", "Resolved PR links", "Clean status output"],
+      "evidence": [],
+      "references": ["HANDOFF.md", "package-lock.json"]
+    },
+    {
+      "id": "GOV-001",
+      "phase": "PH0",
+      "title": "Enforce repository, branch, tag, and vulnerability-reporting governance",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["CTL-001"],
+      "controls": ["SSDF-PO.2", "SSDF-PS.1", "SSDF-RV.1"],
+      "acceptanceCriteria": [
+        "main requires pull requests, required CI, resolved conversations, and prevents force-push and deletion",
+        "Release tags are protected from mutation and deletion",
+        "Private vulnerability reporting is enabled and tested",
+        "Release publication uses an approval-protected environment",
+        "Sole-owner account recovery, succession, archival, and security-response limitations are documented"
+      ],
+      "evidenceRequired": ["Repository ruleset export", "Private report test", "Maintainer runbook review"],
+      "evidence": [],
+      "references": ["SECURITY.md", "SUPPORT.md"]
+    },
+    {
+      "id": "GOV-002",
+      "phase": "PH0",
+      "title": "Create issue and pull-request traceability for every readiness item",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["HK-001", "GOV-001"],
+      "controls": ["SSDF-PO.1"],
+      "acceptanceCriteria": [
+        "Every non-complete ledger item links to one tracking issue",
+        "Issue templates require work-item ID, acceptance criteria, dependencies, test plan, and evidence",
+        "Pull-request templates prohibit completing items without ledger and evidence updates"
+      ],
+      "evidenceRequired": ["Issue inventory", "Template validation"],
+      "evidence": [],
+      "references": [".github"]
+    },
+    {
+      "id": "SEC-001",
+      "phase": "PH1",
+      "title": "Enforce allowlists across navigation, redirects, windows, and external links",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["GOV-002"],
+      "controls": ["SSDF-PW.1", "ELECTRON-13", "ELECTRON-14", "ELECTRON-15"],
+      "acceptanceCriteria": [
+        "will-navigate and will-redirect enforce the same centralized allowlist",
+        "Programmatic and server redirects cannot escape trusted destinations",
+        "Only deliberately allowed HTTPS links reach the system browser",
+        "Regression tests cover subdomain, lookalike, encoded, redirect-chain, and non-HTTPS cases"
+      ],
+      "evidenceRequired": ["Electron security tests", "Separate verifier-agent security report"],
+      "evidence": [],
+      "references": ["desktop/main/index.ts", "desktop/main/security.ts", "docs/THREAT_MODEL.md"]
+    },
+    {
+      "id": "SEC-002",
+      "phase": "PH1",
+      "title": "Bind privileged IPC to an immutable trusted renderer origin",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["GOV-002"],
+      "controls": ["SSDF-PW.1", "ELECTRON-17", "ELECTRON-18", "ELECTRON-20"],
+      "acceptanceCriteria": [
+        "Packaged builds ignore ELECTRON_RENDERER_URL",
+        "Development renderer URLs are restricted to configured loopback origins",
+        "Every privileged IPC request verifies WebContents, main frame, and exact renderer origin",
+        "A remote or redirected document cannot inherit the privileged preload bridge"
+      ],
+      "evidenceRequired": ["Negative Electron IPC tests", "Packaged-build test", "Separate verifier-agent security report"],
+      "evidence": [],
+      "references": ["desktop/main/index.ts", "desktop/main/security.ts", "desktop/preload/index.ts"]
+    },
+    {
+      "id": "SEC-003",
+      "phase": "PH1",
+      "title": "Constrain and validate the renderer-to-Codex RPC surface",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["SEC-002"],
+      "controls": ["SSDF-PW.1", "SSDF-PW.5"],
+      "acceptanceCriteria": [
+        "Renderer-callable app-server methods are explicitly allowlisted",
+        "Security-sensitive request payloads are schema-validated and fail closed",
+        "API-key and injected-token login remain prohibited",
+        "Unknown methods and malformed payloads have negative tests"
+      ],
+      "evidenceRequired": ["RPC policy tests", "Threat-model update", "Separate verifier-agent security report"],
+      "evidence": [],
+      "references": ["desktop/main/index.ts", "src/policy.ts", "docs/THREAT_MODEL.md"]
+    },
+    {
+      "id": "SEC-004",
+      "phase": "PH1",
+      "title": "Eliminate plugin marketplace argument injection and unsafe source ambiguity",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["GOV-002"],
+      "controls": ["SSDF-PW.5", "SSDF-PW.6"],
+      "acceptanceCriteria": [
+        "Marketplace sources cannot be interpreted as CLI options",
+        "Sources are validated as an approved URL form or absolute local path",
+        "Installation shows source and capability-impact confirmation",
+        "Adversarial names and sources are covered by tests"
+      ],
+      "evidenceRequired": ["Plugin security tests", "Manual confirmation-flow record"],
+      "evidence": [],
+      "references": ["desktop/main/plugins.ts", "desktop/renderer/src/App.tsx"]
+    },
+    {
+      "id": "SEC-005",
+      "phase": "PH1",
+      "title": "Correct approval decisions and make consent understandable",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["GOV-002"],
+      "controls": ["SSDF-PW.1", "SSDF-PW.5"],
+      "acceptanceCriteria": [
+        "Legacy and current allow, deny, abort, and timeout responses match generated protocol types",
+        "Approval UI identifies command, working directory, network impact, and file changes",
+        "Malformed, duplicate, expired, and replayed approval responses fail closed",
+        "Real Codex approval allow and deny flows pass end to end"
+      ],
+      "evidenceRequired": ["Protocol tests", "Electron end-to-end record", "UX security review"],
+      "evidence": [],
+      "references": ["desktop/renderer/src/Interactions.tsx", "src/generated/codex"]
+    },
+    {
+      "id": "SEC-006",
+      "phase": "PH1",
+      "title": "Bound RPC lifetime, restart concurrency, and child-process resource use",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["SEC-003"],
+      "controls": ["SSDF-PW.1", "SSDF-PW.5"],
+      "acceptanceCriteria": [
+        "All UI and router requests have defined timeouts and bounded pending state",
+        "Disconnect and restart reject outstanding work with actionable errors",
+        "Only one restart executes at a time and crash loops are rate-limited",
+        "Plugin and child-process invocation has concurrency and resource limits"
+      ],
+      "evidenceRequired": ["Lifecycle stress tests", "Resource-limit test results"],
+      "evidence": [],
+      "references": ["src/router.ts", "desktop/renderer/src/rpc.ts", "desktop/main/index.ts"]
+    },
+    {
+      "id": "RUN-001",
+      "phase": "PH2",
+      "title": "Make Linux sandbox availability an active fail-closed runtime gate",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["SEC-001", "SEC-002", "SEC-003", "SEC-004", "SEC-005", "SEC-006"],
+      "controls": ["SSDF-PW.1", "SSDF-PW.4"],
+      "acceptanceCriteria": [
+        "Smoke testing fails when bubblewrap or user-namespace isolation is unavailable",
+        "Late sandbox warnings cannot leave the UI in a ready state",
+        "Supported AppArmor and user-namespace configurations pass an active safe probe",
+        "No production no-sandbox fallback exists"
+      ],
+      "evidenceRequired": ["Positive and negative distro tests", "Packaged startup logs", "Security review"],
+      "evidence": [],
+      "references": ["scripts/smoke.ts", "desktop/main/index.ts", "docs/LINUX_SANDBOX.md"]
+    },
+    {
+      "id": "RUN-002",
+      "phase": "PH2",
+      "title": "Define and enforce a finite supported Codex CLI contract",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["RUN-001"],
+      "controls": ["SSDF-PO.1", "SSDF-PW.4", "SSDF-PW.6"],
+      "acceptanceCriteria": [
+        "The project records a reviewed decision to bundle a permitted version or support a finite minimum and maximum range",
+        "Unknown older and newer versions are rejected with remediation guidance",
+        "Every supported version passes initialization, OAuth, turn, approval, interrupt, restart, plugin, and logout tests",
+        "Experimental app-server risk and upgrade cadence are documented"
+      ],
+      "evidenceRequired": ["Compatibility decision record", "Per-version CI matrix", "Upgrade runbook"],
+      "evidence": [],
+      "references": ["desktop/main/codex-binary.ts", "src/codex-app-server.ts", "docs/RELEASING.md"]
+    },
+    {
+      "id": "RUN-003",
+      "phase": "PH2",
+      "title": "Control generated Codex schemas and protocol drift",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["RUN-002"],
+      "controls": ["SSDF-PS.1", "SSDF-PW.4"],
+      "acceptanceCriteria": [
+        "Generated schemas carry generator version, source version, command, and digest provenance",
+        "CI regeneration detects unexplained schema drift",
+        "Schema changes require protocol and security review",
+        "The checked-in schema set matches every supported CLI contract"
+      ],
+      "evidenceRequired": ["Schema manifest", "Drift-test output", "Review record"],
+      "evidence": [],
+      "references": ["src/generated/codex", "package.json"]
+    },
+    {
+      "id": "TST-001",
+      "phase": "PH3",
+      "title": "Build a real Electron security and critical-flow end-to-end suite",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["RUN-003"],
+      "controls": ["SSDF-PW.4", "SSDF-PW.7", "SSDF-PW.8"],
+      "acceptanceCriteria": [
+        "Tests execute the packaged Electron boundary rather than only jsdom and unit mocks",
+        "Navigation, redirect, popup, IPC, preload, permission, download, and renderer-crash cases are covered",
+        "OAuth, thread, turn, approval, interrupt, restart, plugin, logout, and remote-view failure cases are covered",
+        "Security-critical tests are required checks"
+      ],
+      "evidenceRequired": ["Required CI run", "Coverage inventory", "Failure-artifact retention test"],
+      "evidence": [],
+      "references": ["desktop/test", ".github/workflows/ci.yml"]
+    },
+    {
+      "id": "TST-002",
+      "phase": "PH3",
+      "title": "Automate or strictly control the clean-machine compatibility matrix",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["TST-001"],
+      "controls": ["SSDF-PW.4", "SSDF-PW.8"],
+      "acceptanceCriteria": [
+        "Ubuntu, Debian, and Fedora versions have pinned test images or recorded clean-VM definitions",
+        "X11, Wayland, x64, ARM64, DEB, and RPM cells are individually tracked",
+        "Install, upgrade, rollback, uninstall, ownership, desktop integration, AppArmor, and sandbox behavior are verified",
+        "Unsupported or untested matrix cells cannot produce advertised artifacts"
+      ],
+      "evidenceRequired": ["Machine-readable matrix", "Per-cell immutable results", "Architecture advertisement test"],
+      "evidence": [],
+      "references": ["docs/RELEASING.md", ".github/workflows/release.yml"]
+    },
+    {
+      "id": "TST-003",
+      "phase": "PH3",
+      "title": "Add protocol robustness, fuzz, stress, and coverage gates",
+      "status": "planned",
+      "releaseBlocker": false,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["TST-001"],
+      "controls": ["SSDF-PW.7", "SSDF-PW.8"],
+      "acceptanceCriteria": [
+        "JSONL framing, malformed records, size limits, reordering, and cancellation receive property or fuzz coverage",
+        "Reconnect and restart stress tests demonstrate bounded memory and pending state",
+        "Security-critical modules have an enforced branch-coverage threshold"
+      ],
+      "evidenceRequired": ["Fuzz corpus summary", "Stress results", "Coverage report"],
+      "evidence": [],
+      "references": ["src/protocol.ts", "src/router.ts", "src/codex-app-server.ts"]
+    },
+    {
+      "id": "TST-004",
+      "phase": "PH3",
+      "title": "Establish accessibility and failure-recovery acceptance tests",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["TST-001"],
+      "controls": ["SSDF-PW.4"],
+      "acceptanceCriteria": [
+        "Keyboard, focus, screen-reader labels, scaling, and high-contrast behavior pass documented criteria",
+        "Renderer crash, app-server crash, network failure, login expiry, and remote-load failure recover safely",
+        "Approval dialogs remain understandable and operable without a pointer"
+      ],
+      "evidenceRequired": ["Accessibility report", "Recovery test results", "Manual UX review"],
+      "evidence": [],
+      "references": ["desktop/renderer/src"]
+    },
+    {
+      "id": "BLD-001",
+      "phase": "PH4",
+      "title": "Pin and minimize all build and workflow inputs",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["TST-002", "TST-004"],
+      "controls": ["SSDF-PS.1", "SSDF-PW.6", "SLSA-BUILD-L2"],
+      "acceptanceCriteria": [
+        "GitHub Actions use reviewed full commit SHAs",
+        "Runner, container, Node, npm, Electron, packager, system package, locale, timezone, and architecture inputs are pinned or captured",
+        "Workflow permissions are least privilege per job and publishing cannot execute from pull requests",
+        "Caches cannot change output and release builds start from ephemeral environments"
+      ],
+      "evidenceRequired": ["Workflow policy test", "Build-input manifest", "Permissions review"],
+      "evidence": [],
+      "references": [".github/workflows/ci.yml", ".github/workflows/release.yml", "package-lock.json"]
+    },
+    {
+      "id": "BLD-002",
+      "phase": "PH4",
+      "title": "Resolve build-chain vulnerabilities and remove unused production surface",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["BLD-001"],
+      "controls": ["SSDF-PW.4", "SSDF-PW.6", "SSDF-RV.1"],
+      "acceptanceCriteria": [
+        "DR-001 is closed by a fixed dependency graph or explicitly accepted by the sole owner for a short recorded period",
+        "No unresolved high or critical runtime vulnerability exists",
+        "Unused runtime dependencies and unsupported packaged bridge code are removed",
+        "Node engine and type definitions match the tested minimum runtime"
+      ],
+      "evidenceRequired": ["Full and production audit reports", "Dependency review", "Package-content diff"],
+      "evidence": [],
+      "references": ["docs/DEPENDENCY_RISK.md", "package.json", "package-lock.json"]
+    },
+    {
+      "id": "PKG-001",
+      "phase": "PH4",
+      "title": "Make DEB and RPM installation policy-correct and sandbox-safe",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["BLD-002"],
+      "controls": ["SSDF-PW.4", "SSDF-PS.3"],
+      "acceptanceCriteria": [
+        "AppArmor installation precedes final sandbox capability selection and does not leave unnecessary setuid state",
+        "Installed ownership, permissions, dependencies, desktop metadata, upgrade, rollback, and uninstall pass policy checks",
+        "Every Electron fuse is named, explicitly configured, and asserted with a compatible verifier",
+        "DEB and RPM install required copyright, license, notice, and privacy material",
+        "The desktop entry does not advertise unsupported URL handling"
+      ],
+      "evidenceRequired": ["DEB inspection", "RPM inspection", "Fuse report", "Clean-VM package tests"],
+      "evidence": [],
+      "references": ["package.json", "build", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
+    },
+    {
+      "id": "BLD-003",
+      "phase": "PH4",
+      "title": "Produce artifact-content SBOMs, checksums, provenance, and consumer verification",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["PKG-001"],
+      "controls": ["SSDF-PS.2", "SSDF-PS.3", "SLSA-BUILD-L2"],
+      "acceptanceCriteria": [
+        "SBOM generation inventories each final DEB and RPM rather than only the npm dependency graph",
+        "Checksums and provenance identify the exact published artifacts",
+        "CI verifies attestations and SBOM correspondence before publication",
+        "Users have tested checksum and attestation verification instructions"
+      ],
+      "evidenceRequired": ["Artifact SBOM", "Verified provenance", "Consumer verification transcript"],
+      "evidence": [],
+      "references": [".github/workflows/release.yml", "docs/RELEASING.md"]
+    },
+    {
+      "id": "BLD-004",
+      "phase": "PH4",
+      "title": "Implement independent deterministic rebuild comparison",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["BLD-003"],
+      "controls": ["SSDF-PS.2", "SLSA-BUILD-L2", "REPRODUCIBLE-BUILDS"],
+      "acceptanceCriteria": [
+        "Unsigned DEB and RPM artifacts are built twice in isolated environments from the same declared inputs",
+        "Byte equality is tested with cryptographic digests",
+        "Time, path, locale, timezone, username, filesystem ordering, and cache variance are exercised",
+        "Any unavoidable normalization is scripted, minimal, reviewed, and documented",
+        "A separate verifier-agent run reproduces and compares artifacts, with limitations disclosed to the owner"
+      ],
+      "evidenceRequired": ["Rebuild script", "Independent build manifests", "Digest comparison", "Variance report"],
+      "evidence": [],
+      "references": ["docs/production-readiness/README.md", ".github/workflows/release.yml"]
+    },
+    {
+      "id": "PRV-001",
+      "phase": "PH5",
+      "title": "Minimize remote-data activity and provide complete local-data control",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["BLD-004"],
+      "controls": ["SSDF-PO.1", "SSDF-PW.1"],
+      "acceptanceCriteria": [
+        "ChatGPT network and persistent session creation are lazy and user-initiated",
+        "Logout and clear-local-data controls cover ChatGPT and documented Codex state",
+        "Privacy documentation names exact data paths, retention, cleanup, uninstall residue, and diagnostic redaction",
+        "Network behavior and cleanup are verified on every supported distro"
+      ],
+      "evidenceRequired": ["Network observation", "Cleanup test", "Privacy review"],
+      "evidence": [],
+      "references": ["PRIVACY.md", "desktop/main/index.ts", "desktop/renderer/src/App.tsx"]
+    },
+    {
+      "id": "REL-001",
+      "phase": "PH5",
+      "title": "Define update, rollback, support, and vulnerability-response operations",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["PRV-001", "GOV-001"],
+      "controls": ["SSDF-RV.1", "SSDF-RV.2", "SSDF-RV.3"],
+      "acceptanceCriteria": [
+        "Users receive authenticated security-update notification or a supported updater path",
+        "Rollback retains and verifies the previous supported artifact",
+        "Security severity, response targets, disclosure, patch, and end-of-life processes are documented",
+        "A vulnerability-report tabletop exercise and update rollback drill pass"
+      ],
+      "evidenceRequired": ["Operations runbook", "Tabletop record", "Update and rollback test"],
+      "evidence": [],
+      "references": ["SECURITY.md", "SUPPORT.md", "docs/RELEASING.md"]
+    },
+    {
+      "id": "REL-002",
+      "phase": "PH5",
+      "title": "Complete legal, trademark, licensing, and redistribution review",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["PKG-001", "PRV-001"],
+      "controls": ["SSDF-PO.1", "SSDF-PS.3"],
+      "acceptanceCriteria": [
+        "Third-party notices and package license inventories are complete",
+        "ChatGPT embedding, Codex integration or bundling decision, OpenAI marks, disclaimers, and distribution terms receive recorded owner or counsel review",
+        "The Apache-2.0 warranty disclaimer and support expectations are clearly presented",
+        "No unsupported affiliation or security certification claim appears in product or release material"
+      ],
+      "evidenceRequired": ["License scan", "Recorded legal/owner decision", "Release-copy review"],
+      "evidence": [],
+      "references": ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "README.md"]
+    },
+    {
+      "id": "REL-003",
+      "phase": "PH5",
+      "title": "Qualify one immutable release candidate across the supported matrix",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["TST-002", "TST-003", "TST-004", "BLD-004", "REL-001", "REL-002"],
+      "controls": ["SSDF-PW.4", "SSDF-PW.8", "SSDF-RV.1"],
+      "acceptanceCriteria": [
+        "One commit and candidate version pass verify, full audits, CodeQL, dependency review, Electron end-to-end, Codex compatibility, and every advertised matrix cell",
+        "The candidate tag, package version, changelog, schema manifest, SBOM, provenance, and checksums agree",
+        "No artifact is rebuilt between qualification and publication",
+        "A separate verifier-agent report and two explicit sole-owner release decisions are retained without claiming independent-human review"
+      ],
+      "evidenceRequired": ["Release-candidate manifest", "Full gate report", "Separate verifier-agent report and explicit sole-owner release approval"],
+      "evidence": [],
+      "references": ["docs/RELEASING.md", ".github/workflows/release.yml"]
+    },
+    {
+      "id": "OPS-001",
+      "phase": "PH6",
+      "title": "Publish the qualified stable artifacts without rebuilding",
+      "status": "planned",
+      "releaseBlocker": true,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["REL-003"],
+      "controls": ["SSDF-PS.2", "SSDF-PS.3", "SLSA-BUILD-L2"],
+      "acceptanceCriteria": [
+        "Publication promotes the exact qualified artifact digests",
+        "Stable publication requires protected-tag and protected-environment approval",
+        "Release notes state support matrix, known limitations, verification steps, privacy cleanup, rollback, and security reporting",
+        "A clean consumer machine verifies and installs the published artifact"
+      ],
+      "evidenceRequired": ["Published release URL", "Digest equality record", "Consumer verification record"],
+      "evidence": [],
+      "references": [".github/workflows/release.yml", "docs/RELEASING.md"]
+    },
+    {
+      "id": "OPS-002",
+      "phase": "PH6",
+      "title": "Operate recurring dependency, platform, incident, and release reviews",
+      "status": "planned",
+      "releaseBlocker": false,
+      "owner": "itecob",
+      "reviewer": null,
+      "dependsOn": ["OPS-001"],
+      "controls": ["SSDF-PO.1", "SSDF-RV.1", "SSDF-RV.3"],
+      "acceptanceCriteria": [
+        "Electron, Codex, Node, builder, distro, and dependency support reviews have named cadence and owner",
+        "Vulnerability intake and update delivery metrics are reviewed after each release",
+        "A post-release review records incidents, user-impacting defects, drift, and corrective work",
+        "The plan is re-baselined through reviewed ledger changes rather than silent status edits"
+      ],
+      "evidenceRequired": ["Maintenance calendar", "Post-release review", "Metrics record"],
+      "evidence": [],
+      "references": ["SECURITY.md", "SUPPORT.md", "docs/DEPENDENCY_RISK.md"]
+    }
+  ]
+}
