@@ -87,10 +87,10 @@
       "id": "CTL-001",
       "phase": "PH0",
       "title": "Establish the canonical machine-validated readiness ledger",
-      "status": "in_review",
+      "status": "complete",
       "releaseBlocker": true,
       "owner": "itecob",
-      "reviewer": null,
+      "reviewer": "verifier-agent",
       "dependsOn": [],
       "controls": ["SSDF-PO.1", "SSDF-PO.2"],
       "acceptanceCriteria": [
@@ -99,7 +99,14 @@
         "Stable version declaration fails while release blockers remain incomplete"
       ],
       "evidenceRequired": ["Plan document", "Validator test output"],
-      "evidence": ["docs/production-readiness/evidence/CTL-001.md"],
+      "evidence": [
+        "docs/production-readiness/evidence/CTL-001.md",
+        "https://github.com/itecob/bridgepane-linux/commit/c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+        "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108216385",
+        "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108220994",
+        "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108830305",
+        "https://github.com/itecob/bridgepane-linux/actions/runs/30387395534/job/90370005688"
+      ],
       "references": ["docs/production-readiness/README.md", "scripts/validate-production-plan.mjs"],
       "protocol": {
         "architecture": {
@@ -141,21 +148,30 @@
           "decision": "accepted_with_compensating_controls",
           "reviewedCommit": "380a45056a834f48505d0ba7ecd297a983ec9d2e",
           "url": "https://github.com/itecob/bridgepane-linux/pull/9#issuecomment-5084007714"
+        },
+        {
+          "role": "verifier-agent",
+          "decision": "accepted",
+          "reviewedCommit": "c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+          "url": "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108220994"
         }
       ],
       "authorityApproval": {
         "owner": "itecob",
         "decision": "accepted",
-        "date": "2026-07-26",
-        "reviewedCommit": "380a45056a834f48505d0ba7ecd297a983ec9d2e",
-        "reviewPacket": "docs/production-readiness/reviews/PH0-owner-review-packet.md",
-        "url": "https://github.com/itecob/bridgepane-linux/pull/9#issuecomment-5084118242"
+        "date": "2026-07-28",
+        "reviewedCommit": "c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+        "url": "https://github.com/itecob/bridgepane-linux/pull/10#issuecomment-5108830305"
       },
       "independenceLimitations": ["One human authority; agent roles do not constitute independent-human review"],
-      "residualRisks": ["A compromised or unavailable sole-owner account can alter or halt governance"],
+      "residualRisks": [
+        "A compromised or unavailable sole-owner account can alter or halt governance",
+        "Full-history CI bandwidth, storage, and Git-object processing grow with reachable repository history"
+      ],
       "deviation": "docs/production-readiness/deviations/CTL-001-pre-workflow.md",
       "issue": null,
-      "sourceCommit": null
+      "sourceCommit": "c873e7bbc3fa8d94c9587aec6f53eb857956f1f2",
+      "completedAt": "2026-07-28"
     },
     {
       "id": "HK-001",
