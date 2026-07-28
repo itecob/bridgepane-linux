@@ -40,7 +40,7 @@ jobs:
           npm sbom --sbom-format cyclonedx > release/sbom-${{ matrix.arch }}.cdx.json
           cd release
           sha256sum *.deb *.rpm *.json > SHA256SUMS-${{ matrix.arch }}
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             release/*.deb
