@@ -222,3 +222,58 @@ Separate exact decisions are mandatory for:
 No HK-001 implementation, local deletion, PR comment or closure, or completion
 is authorized until these required changes are incorporated and the sole owner
 accepts the exact final response commit.
+
+## Final addendum decision
+
+- **Reviewed corrective addendum:**
+  `3a6199a549b2a22e5971f9b2eb1d84d34c23d131`
+- **Corrective-addendum SHA-256:**
+  `b200d34d1ef4f7ac9e2969aaa1c695ee8a851cb310d1a5008c73298a8e4d278e`
+- **Final decision:** accepted for owner review
+
+The corrective addendum closes the two remaining findings.
+
+Canonical dangling-object evidence was reproduced:
+
+- recursive tree-listing SHA-256:
+  `1abdfe62f119760f52295b238b205c8bea80109f8c7064da35c2faa947cb28b2`;
+- Git tree:
+  `39deecb780a1cda3a9b9a4c8efc95585cd214c6d`;
+- stable patch ID:
+  `6997d04c9b6266f4c0d4082839496b5c8b94b212`.
+
+Public cleanup specifications now use repository-relative paths. The literal
+absolute execution root remains only in an owner-approved private packet.
+Execution requires a physical, symlink-free root matching Git's top level,
+exact original HEAD, containment, type, and digest checks. Only individual
+`unlink --` and non-recursive `rmdir --` operations are permitted.
+
+The architecture truthfully records that the earlier public revision
+`be3ed1abb939cea19474cfe93c9e9859e514e4d6` irreversibly disclosed a
+private absolute checkout path. Owner acceptance of that residual, or
+separately authorized incident handling, is required before implementation.
+History rewriting and claims that a later edit erases disclosure remain
+prohibited.
+
+No implementation occurred. Relative to merged baseline
+`bfab2ace4607a78597d557389fc785e2bba46791`, the HK branch contains only
+the accepted request and response documents. The plan, Dependabot policy,
+README, packages, lockfile, workflows, dependencies, product code, original
+local files, refs, dependency PRs, and repository settings remain unchanged.
+
+### Owner-authorizable initial slice
+
+After accepting the exact final response commit and the irreversible-disclosure
+residual, the owner may authorize only:
+
+- `docs/production-readiness/plan.json`;
+- `docs/production-readiness/evidence/HK-001.md`.
+
+The slice may legally activate HK-001, add planned BLD-005, add BLD-005 to
+`BLD-001.dependsOn`, bind the accepted protocol and owner authorization, and
+record residual risks. HK-001 must remain incomplete.
+
+The slice may not modify README, Dependabot policy, packages, lockfile,
+workflows, product code, HANDOFF, original local files, refs, PRs, branches, or
+settings. This final decision is role-separated verifier-agent technical
+review, not independent-human approval.
