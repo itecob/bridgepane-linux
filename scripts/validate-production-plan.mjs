@@ -406,9 +406,10 @@ if (basePlan) {
           }
         }
       }
-      if (item.status !== "complete"
+      const enteringComplete = base.status !== "complete" && item.status === "complete";
+      if (!enteringComplete
         && JSON.stringify(base.authorityApproval) !== JSON.stringify(item.authorityApproval)) {
-        fail(`${item.id} mutates owner authority approval before completion`);
+        fail(`${item.id} mutates owner authority approval after acceptance`);
       }
     }
   }
@@ -531,6 +532,58 @@ async function runSelfTests() {
       url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
     };
   };
+  const setIncompleteState = (item, status = "in_review") => {
+    item.status = status;
+    item.reviewer = null;
+    delete item.completedAt;
+    item.sourceCommit = null;
+    item.authorityApproval = structuredClone(plan.workItems[0].authorityApproval);
+    delete item.blocker;
+    if (status === "blocked") item.blocker = "fixture blocker";
+  };
+  const seedPlan = (status) => {
+    const seeded = structuredClone(plan);
+    const ctl = seeded.workItems[0];
+    setIncompleteState(ctl);
+    if (status === "complete") bindCompletion(ctl, "e".repeat(40));
+    return seeded;
+  };
+  const prepareTransition = (candidate, base, before, after) => {
+    candidate.workItems = [candidate.workItems[0]];
+    base.workItems = [base.workItems[0]];
+    const baseItem = base.workItems[0];
+    setIncompleteState(baseItem);
+    if (before === "complete") bindCompletion(baseItem, "b".repeat(40));
+    else setIncompleteState(baseItem, before);
+    const currentItem = structuredClone(baseItem);
+    if (after === "complete" && before !== "complete") {
+      bindCompletion(currentItem);
+    } else if (after !== "complete") {
+      setIncompleteState(currentItem, after);
+    }
+    candidate.workItems[0] = currentItem;
+    return { currentItem, baseItem };
+  };
+  const rebindCompletion = (item, source = "d".repeat(40)) => {
+    item.sourceCommit = source;
+    item.evidence = [`https://github.com/itecob/bridgepane-linux/commit/${source}`];
+    item.verificationReviews = [
+      ...item.verificationReviews,
+      {
+        role: "verifier-agent",
+        decision: "accepted",
+        reviewedCommit: source,
+        url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
+      },
+    ];
+    item.authorityApproval = {
+      owner: "itecob",
+      decision: "accepted",
+      date: "2026-07-28",
+      reviewedCommit: source,
+      url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
+    };
+  };
   const cleanBaseEnv = () => {
     const env = { ...process.env };
     for (const key of [
@@ -592,8 +645,9 @@ async function runSelfTests() {
     await mkdir(join(root, "scripts"), { recursive: true });
     await cp(new URL(import.meta.url), scriptTarget);
     const runFailure = async (name, mutate, expected, options = {}) => {
-      const candidate = structuredClone(plan);
-      const base = structuredClone(plan);
+      const seed = options.seedStatus ? seedPlan(options.seedStatus) : plan;
+      const candidate = structuredClone(seed);
+      const base = structuredClone(seed);
       const packageJson = structuredClone(originalPackage);
       mutate(candidate, packageJson, base);
       await writeFile(planTarget, `${JSON.stringify(candidate, null, 2)}\n`);
@@ -612,9 +666,10 @@ async function runSelfTests() {
       }
       cases.push(name);
     };
-    const runSuccess = async (name, mutate) => {
-      const candidate = structuredClone(plan);
-      const base = structuredClone(plan);
+    const runSuccess = async (name, mutate, options = {}) => {
+      const seed = options.seedStatus ? seedPlan(options.seedStatus) : plan;
+      const candidate = structuredClone(seed);
+      const base = structuredClone(seed);
       const packageJson = structuredClone(originalPackage);
       mutate(candidate, base);
       await writeFile(planTarget, `${JSON.stringify(candidate, null, 2)}\n`);
@@ -654,15 +709,49 @@ async function runSelfTests() {
     await runFailure("completion malformed evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence.push("../evidence"); }, "unsafe or mutable evidence");
     await runFailure("completion foreign evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["https://github.com/o/r/commit/" + "c".repeat(40)]; }, "unsafe or mutable evidence");
     await runFailure("mutated request", (p) => { p.workItems[0].protocol.architecture.request.revision = "changed"; p.workItems[0].protocol.architecture.response.requestRevision = "changed"; }, "mutates accepted protocol", { withBase: true });
-    await runFailure("removed verifier record", (p) => { p.workItems[0].verificationReviews = []; }, "removes accepted verificationReviews", { withBase: true });
-    await runFailure("mutated owner approval", (p) => { p.workItems[0].authorityApproval.date = "2026-07-27"; }, "mutates owner authority approval", { withBase: true });
+    await runFailure("removed verifier record", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "in_review", "in_review");
+      currentItem.verificationReviews = [];
+    }, "removes accepted verificationReviews", { withBase: true });
+    await runFailure("mutated owner approval", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "in_review", "in_review");
+      currentItem.authorityApproval.date = "2026-07-27";
+    }, "mutates owner authority approval", { withBase: true });
+    await runFailure("completed approval date mutation", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "complete", "complete");
+      currentItem.authorityApproval.date = "2026-07-28";
+    }, "mutates owner authority approval", { withBase: true, seedStatus: "in_review" });
+    await runFailure("completed approval URL mutation", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "complete", "complete");
+      currentItem.authorityApproval.url = "https://github.com/itecob/bridgepane-linux/actions/runs/1";
+    }, "mutates owner authority approval", { withBase: true, seedStatus: "complete" });
+    await runFailure("completed approval commit mutation", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "complete", "complete");
+      currentItem.authorityApproval.reviewedCommit = "d".repeat(40);
+    }, "mutates owner authority approval", { withBase: true, seedStatus: "complete" });
+    await runFailure("completed package rebinding", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "complete", "complete");
+      rebindCompletion(currentItem);
+    }, "mutates owner authority approval", { withBase: true, seedStatus: "complete" });
+    await runFailure("entering completion mismatched owner", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "in_review", "complete");
+      currentItem.authorityApproval.reviewedCommit = "d".repeat(40);
+    }, "not bound to owner approval", { withBase: true, seedStatus: "complete" });
+    await runFailure("entering completion missing verifier", (p, _pkg, base) => {
+      const { currentItem } = prepareTransition(p, base, "in_review", "complete");
+      currentItem.verificationReviews = currentItem.verificationReviews.filter(
+        (review) => review.reviewedCommit !== currentItem.sourceCommit,
+      );
+    }, "not bound to a verifier review", { withBase: true, seedStatus: "complete" });
     await runFailure("unknown dependency", (p) => { p.workItems[0].dependsOn = ["BAD-999"]; }, "unknown dependency");
     await runFailure("self dependency", (p) => { p.workItems[0].dependsOn = ["CTL-001"]; }, "depends on itself");
     await runFailure("dependency cycle", (p) => { p.workItems[0].dependsOn = ["HK-001"]; p.workItems[1].dependsOn = ["CTL-001"]; }, "dependency cycle includes");
     await runFailure("incomplete dependency", (p) => { p.workItems[0].dependsOn = ["HK-001"]; }, "while dependency HK-001 is planned");
     await runFailure("unnamed owner", (p) => { p.workItems[0].owner = "unassigned"; }, "without one named accountable owner");
     await runFailure("invalid completion", (p) => { p.workItems[0].status = "complete"; p.workItems[0].reviewer = "itecob"; }, "without a separate verifier role");
-    await runFailure("illegal transition", (_p, _pkg, base) => { base.workItems[0].status = "complete"; }, "illegal transition complete -> in_review", { withBase: true });
+    await runFailure("illegal transition", (p, _pkg, base) => {
+      prepareTransition(p, base, "complete", "in_review");
+    }, "illegal transition complete -> in_review", { withBase: true, seedStatus: "complete" });
     await runFailure("weakened blocker", (p, _pkg, base) => { base.workItems[0].releaseBlocker = true; p.workItems[0].releaseBlocker = false; }, "weakens releaseBlocker", { withBase: true });
     await runFailure("weakened criteria", (p, _pkg, base) => { base.workItems[0].acceptanceCriteria.push("must remain"); }, "weakens acceptanceCriteria", { withBase: true });
     await runFailure("weakened evidence", (p, _pkg, base) => { base.workItems[0].evidenceRequired.push("must remain"); }, "weakens evidenceRequired", { withBase: true });
@@ -687,23 +776,14 @@ async function runSelfTests() {
       if (!output.some((message) => message.includes(expected))) throw new Error(`${name}: fixture unexpectedly passed`);
       cases.push(name);
     }
-    for (const [before, afterSet] of Object.entries(legalTransitions)) {
-      for (const after of afterSet) {
-        await runSuccess(`legal transition ${before} -> ${after}`, (candidate, base) => {
-          candidate.workItems = [candidate.workItems[0]];
-          base.workItems = [base.workItems[0]];
-          const currentItem = candidate.workItems[0];
-          const baseItem = base.workItems[0];
-          baseItem.status = before;
-          currentItem.status = after;
-          if (before === "blocked") baseItem.blocker = "fixture blocker";
-          if (after === "blocked") currentItem.blocker = "fixture blocker";
-          if (after === "complete") bindCompletion(currentItem);
-          else {
-            currentItem.completedAt = null;
-            currentItem.sourceCommit = null;
-          }
-        });
+    for (const seedStatus of ["in_review", "complete"]) {
+      for (const [before, afterSet] of Object.entries(legalTransitions)) {
+        for (const after of afterSet) {
+          const suffix = seedStatus === "in_review" ? "" : " from complete seed";
+          await runSuccess(`legal transition ${before} -> ${after}${suffix}`, (candidate, base) => {
+            prepareTransition(candidate, base, before, after);
+          }, { seedStatus });
+        }
       }
     }
 
