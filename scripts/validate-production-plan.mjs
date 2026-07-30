@@ -1364,9 +1364,11 @@ async function runSelfTests() {
     await runFailure("self dependency", (p) => { fixtureCtl(p).dependsOn = ["CTL-001"]; }, [
       "depends on itself", "dependency cycle includes CTL-001",
     ]);
-    await runFailure("dependency cycle", (p) => { fixtureCtl(p).dependsOn = ["HK-001"]; fixtureHk(p).dependsOn = ["CTL-001"]; }, [
-      "complete while dependency HK-001 is planned", "dependency cycle includes",
-    ]);
+    await runFailure("dependency cycle", (p) => {
+      bindCompletion(fixtureHk(p));
+      fixtureCtl(p).dependsOn = ["HK-001"];
+      fixtureHk(p).dependsOn = ["CTL-001"];
+    }, "dependency cycle includes");
     const configureDependencyCase = (candidate, dependencyStatus, dependentStatus) => {
       const dependency = fixtureHk(candidate);
       const dependent = fixtureCtl(candidate);
