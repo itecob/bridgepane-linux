@@ -9,9 +9,17 @@
   `02ff3c9ea6ad8b0c9ce10b4ce8731c74a3fe004e1fa25fee6e82eaa0d3069f51`
 - **Architecture response:** ARS-HK-001-B
 - **Architecture response commit:**
-  `4790602c341647cfe4d0a912dacdb7b65947829e`
+  `e372bd6e1001ea9359bf391c3bcbb8824c2277ba`
 - **Architecture response SHA-256:**
+  `e8429fd9a11740bc7109234518c9b88f9fe85067997c93ebc5c20cebf30ae5f8`
+- **Prior rejected architecture response:**
+  `4790602c341647cfe4d0a912dacdb7b65947829e`
+- **Prior rejected architecture response SHA-256:**
   `805c0d77a76d849c33efe0b076041544b11ebdecf91e6516a59701a1d3255d20`
+- **Verification rejection commit:**
+  `0e83959b8e162ee6383df9c05ff493cc477eb3a5`
+- **Verification rejection SHA-256:**
+  `7445ec4e6a008f029449d625133a1896ca9476ed3469466e287fcfd8e778a7b6`
 - **Accepted Stage A evidence head:**
   `d5b7af809c77c65f9d1c92dd5e7d606ece0c673d`
 - **Accepted Stage A evidence SHA-256:**
@@ -20,29 +28,29 @@
   https://github.com/itecob/bridgepane-linux/pull/11#issuecomment-5140048551
 - **Verifier:** Codex role-separated verifier
 - **Response date:** 2026-07-31
-- **Decision:** rejected pending exact architecture corrections
+- **Decision:** accepted for owner preimplementation review with binding controls
 - **Implementation authorized:** no
 
 ## Decision
 
-Reject the exact architecture response at `4790602c341647cfe4d0a912dacdb7b65947829e`
-as an implementation contract. Its field-level activation target is
-schema-representable and its B1/B2 external-decision model is directionally
-sound, but three binding controls are internally inconsistent or unsafe:
+Accept the corrected architecture response at
+`e372bd6e1001ea9359bf391c3bcbb8824c2277ba` for human-owner
+preimplementation review. It adopts all three controls required by the prior
+verification rejection:
 
-1. a cumulative diff from the accepted Stage A evidence head cannot contain
-   only the two implementation paths because four required Stage B protocol
-   paths are committed on that same descendant lineage;
-2. B1 and B2 evidence cannot embed their own final evidence-file or patch
-   digests without a circular hash dependency; and
-3. ordinary B1 reversion is safe only while the activation lineage remains
-   unmerged against a base whose ledger still has HK-001 `planned`. After B1 is
-   accepted into a base, `ready -> planned` plus removal of active governance
-   records violates the current validator and requires a forward rollback.
+1. protocol, implementation, commit, and full-lineage scopes now name exact
+   bases and distinguish four, two, and six paths;
+2. B1 and B2 prohibit every identity derived from their own evidence bytes and
+   use immutable post-publication verifier and owner comments; and
+3. rollback is selected-base-aware, limits ordinary B1 reversion to an
+   unmerged Stage A-based lineage, and requires a separately authorized forward
+   `ready -> blocked` rollback with explicit BLD graph disposition after ready
+   enters the selected base.
 
-These are protocol defects, not authorization to repair the plan or evidence.
-A corrective architecture response must adopt the exact controls below, then
-receive immutable verification and a new owner implementation decision.
+The accepted field-level HK, HANDOFF, BLD-005, BLD-001, date, evidence-prefix,
+gate, negative-case, residual-risk, and stable-release controls remain intact.
+This is protocol acceptance only. It does not authorize a plan or evidence
+edit, B1, B2, HK activation, BLD creation, or any external mutation.
 
 ## Independently reproduced source state
 
@@ -51,7 +59,8 @@ The owner comment authorizes only the four Stage B protocol-document paths and
 explicitly prohibits plan, evidence, HK, BLD, package, dependency, workflow,
 product, local, ref, PR, branch, setting, cleanup, and release mutations.
 
-At architecture response head `4790602c341647cfe4d0a912dacdb7b65947829e`:
+At corrected architecture response head
+`e372bd6e1001ea9359bf391c3bcbb8824c2277ba`:
 
 - the worktree is clean;
 - the plan SHA-256 is
@@ -179,16 +188,14 @@ The exact target has 29 items, 26 open blockers, 27 planned, one ready, no
 in-progress/in-review/blocked items, and one complete item. Product stage and
 package version remain alpha.
 
-## Required architecture corrections
+## Accepted corrected transaction controls
 
 ### 1. Separate lineage scope from implementation scope
 
-At response head `4790602c341647cfe4d0a912dacdb7b65947829e`, a diff from
-Stage A head `d5b7af809c77c65f9d1c92dd5e7d606ece0c673d` already contains three
-protocol paths. Publication of this response adds the fourth. Therefore a B1
-or B2 descendant cannot have a two-path cumulative diff from Stage A.
-
-The corrected architecture must define all scopes exactly:
+At rejected response head `4790602c341647cfe4d0a912dacdb7b65947829e`, a diff
+from Stage A head `d5b7af809c77c65f9d1c92dd5e7d606ece0c673d` already
+contained three protocol paths. Publication of the prior verification response
+added the fourth. The corrected architecture now defines all scopes exactly:
 
 - protocol delta, Stage A head to final protocol head: exactly the two Stage B
   request paths and two Stage B response paths;
@@ -254,12 +261,13 @@ Remote comments remain audit history and receive correction comments after any
 rollback. Reset, clean, history rewriting, force-push, ref deletion, broad file
 removal, and evidence rewriting remain prohibited.
 
-## Required B1/B2 verification after correction
+## Required B1/B2 verification
 
 ### Preimplementation owner gate
 
-After corrected architecture and verification responses are immutable, the
-owner must name their exact commits and SHA-256 values, final protocol head,
+After architecture response `e372bd6e1001ea9359bf391c3bcbb8824c2277ba`
+and this final verification response are immutable, the owner must name their
+exact commits and SHA-256 values, final protocol head,
 accepted Stage A base, actual date, exact B1 two paths, field-level HK target,
 complete BLD-005 and BLD-001 graph, HANDOFF treatment, external-binding model,
 corrected scope bases, rollback distinction, residual risks, irreversible
@@ -379,7 +387,8 @@ or completion, BLD-005 creation or work, BLD-001 mutation, candidate
 disposition, package operation, dependency change, cleanup, Git/ref/PR/branch/
 setting mutation, merge, release, or stable publication.
 
-Implementation remains blocked until a corrected architecture response adopts
-the required scope, non-circular evidence, and rollback controls; an independent
-verifier accepts that exact correction; and the human owner issues a new exact
-preimplementation authorization.
+Implementation remains blocked until this final response is committed and its
+digest is recorded, an immutable verifier record accepts the exact final
+protocol head, and the human owner issues a new exact preimplementation
+authorization satisfying every gate in this response and the corrected
+architecture.
