@@ -1,4 +1,16 @@
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { constants } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path, { join } from "node:path";
@@ -502,14 +514,93 @@ function validateWorkflowFixture(name, text, { pullRequest = false, release = fa
 }
 
 async function runSelfTests() {
-  const root = await mkdtemp(join(tmpdir(), "bridgepane-plan-fixtures-"));
+  const sourceRoot = await realpath(process.cwd());
+  const temporaryParent = await realpath(tmpdir());
+  const root = await mkdtemp(join(temporaryParent, "bridgepane-plan-fixtures-"));
+  const resolvedRoot = await realpath(root);
+  if (path.dirname(resolvedRoot) !== temporaryParent
+    || !path.basename(resolvedRoot).startsWith("bridgepane-plan-fixtures-")) {
+    throw new Error("fixture root escaped the expected temporary parent");
+  }
+  const fixtureRootMetadata = await lstat(resolvedRoot, { bigint: true });
+  if (!fixtureRootMetadata.isDirectory()
+    || (fixtureRootMetadata.mode & 0o077n) !== 0n
+    || (typeof process.getuid === "function" && fixtureRootMetadata.uid !== BigInt(process.getuid()))) {
+    throw new Error("fixture root is not a private directory owned by this process user");
+  }
   const scriptTarget = join(root, "scripts", "validate-production-plan.mjs");
   const planTarget = join(root, planPath);
   const packageTarget = join(root, "package.json");
   const baseTarget = join(root, "base-plan.json");
   const originalPackage = JSON.parse(await readFile("package.json", "utf8"));
   const cases = [];
+  const digest = (value) => createHash("sha256").update(value).digest("hex");
+  const exactItem = (candidate, id) => {
+    const matches = (candidate.workItems ?? []).filter((item) => item.id === id);
+    if (matches.length !== 1) {
+      throw new Error(`fixture requires exactly one ${id}; found ${matches.length}`);
+    }
+    return matches[0];
+  };
+  const fixtureCtl = (candidate) => exactItem(candidate, "CTL-001");
+  const fixtureHk = (candidate) => exactItem(candidate, "HK-001");
+  const ctlTemplate = exactItem(plan, "CTL-001");
+  const protocolTemplate = structuredClone(ctlTemplate.protocol);
+  const limitationTemplate = [
+    "Synthetic fixture role separation is not independent-human review",
+  ];
+  const syntheticReview = (source = "a".repeat(40)) => ({
+    role: "verifier-agent",
+    decision: "accepted",
+    reviewedCommit: source,
+    url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
+  });
+  const syntheticApproval = (source = "a".repeat(40)) => ({
+    owner: "itecob",
+    decision: "accepted",
+    date: "2026-07-27",
+    reviewedCommit: source,
+    url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
+  });
+  const clearLifecycle = (item) => {
+    item.owner = "itecob";
+    item.reviewer = null;
+    item.evidence = [];
+    delete item.blocker;
+    delete item.completedAt;
+    delete item.sourceCommit;
+    delete item.protocol;
+    delete item.verificationReviews;
+    delete item.authorityApproval;
+    delete item.independenceLimitations;
+    delete item.residualRisks;
+  };
+  const setIncompleteState = (item, status = "in_review") => {
+    clearLifecycle(item);
+    item.status = status;
+    if (status === "blocked") item.blocker = "fixture blocker";
+    if (active.has(status)) {
+      item.protocol = structuredClone(protocolTemplate);
+      item.verificationReviews = [syntheticReview()];
+      item.authorityApproval = syntheticApproval();
+      item.independenceLimitations = structuredClone(limitationTemplate);
+      item.residualRisks = [];
+    }
+  };
   const bindCompletion = (item, source = "c".repeat(40)) => {
+    const accepted = active.has(item.status) ? {
+      protocol: structuredClone(item.protocol),
+      verificationReviews: structuredClone(item.verificationReviews ?? []),
+      independenceLimitations: structuredClone(item.independenceLimitations ?? []),
+      residualRisks: structuredClone(item.residualRisks ?? []),
+    } : null;
+    setIncompleteState(item, "in_review");
+    if (accepted) {
+      item.protocol = accepted.protocol;
+      item.verificationReviews = accepted.verificationReviews;
+      item.independenceLimitations = accepted.independenceLimitations;
+      item.residualRisks = accepted.residualRisks;
+    }
     item.status = "complete";
     item.reviewer = "verifier-agent";
     item.completedAt = "2026-07-27";
@@ -517,42 +608,32 @@ async function runSelfTests() {
     item.evidence = [`https://github.com/itecob/bridgepane-linux/commit/${source}`];
     item.verificationReviews = [
       ...(item.verificationReviews ?? []),
-      {
-        role: "verifier-agent",
-        decision: "accepted",
-        reviewedCommit: source,
-        url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
-      },
+      syntheticReview(source),
     ];
-    item.authorityApproval = {
-      owner: "itecob",
-      decision: "accepted",
-      date: "2026-07-27",
-      reviewedCommit: source,
-      url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
-    };
+    item.authorityApproval = syntheticApproval(source);
   };
-  const setIncompleteState = (item, status = "in_review") => {
-    item.status = status;
-    item.reviewer = null;
-    delete item.completedAt;
-    item.sourceCommit = null;
-    item.authorityApproval = structuredClone(plan.workItems[0].authorityApproval);
-    delete item.blocker;
-    if (status === "blocked") item.blocker = "fixture blocker";
+  const canonicalSeedPlan = (source = plan) => {
+    const seeded = structuredClone(source);
+    for (const item of seeded.workItems ?? []) {
+      setIncompleteState(item, "planned");
+      item.dependsOn = [];
+      item.references = ["docs/production-readiness/README.md"];
+    }
+    const ctl = exactItem(seeded, "CTL-001");
+    bindCompletion(ctl, "e".repeat(40));
+    return seeded;
   };
-  const seedPlan = (status) => {
-    const seeded = structuredClone(plan);
-    const ctl = seeded.workItems[0];
-    setIncompleteState(ctl);
-    if (status === "complete") bindCompletion(ctl, "e".repeat(40));
+  const seedPlan = (status, source = plan) => {
+    const seeded = canonicalSeedPlan(source);
+    const ctl = exactItem(seeded, "CTL-001");
+    if (status !== "complete") setIncompleteState(ctl, status);
     return seeded;
   };
   const prepareTransition = (candidate, base, before, after) => {
-    candidate.workItems = [candidate.workItems[0]];
-    base.workItems = [base.workItems[0]];
-    const baseItem = base.workItems[0];
-    setIncompleteState(baseItem);
+    const candidateItem = structuredClone(exactItem(candidate, "CTL-001"));
+    const baseItem = structuredClone(exactItem(base, "CTL-001"));
+    candidate.workItems = [candidateItem];
+    base.workItems = [baseItem];
     if (before === "complete") bindCompletion(baseItem, "b".repeat(40));
     else setIncompleteState(baseItem, before);
     const currentItem = structuredClone(baseItem);
@@ -560,8 +641,19 @@ async function runSelfTests() {
       bindCompletion(currentItem);
     } else if (after !== "complete") {
       setIncompleteState(currentItem, after);
+      if (active.has(before)) {
+        for (const field of [
+          "protocol",
+          "verificationReviews",
+          "authorityApproval",
+          "independenceLimitations",
+          "residualRisks",
+        ]) {
+          currentItem[field] = structuredClone(baseItem[field]);
+        }
+      }
     }
-    candidate.workItems[0] = currentItem;
+    candidate.workItems = [currentItem];
     return { currentItem, baseItem };
   };
   const rebindCompletion = (item, source = "d".repeat(40)) => {
@@ -584,6 +676,226 @@ async function runSelfTests() {
       url: `https://github.com/itecob/bridgepane-linux/commit/${source}`,
     };
   };
+  const assertSafeFixtureReference = (reference) => {
+    if (!localReference(reference)
+      || /^[A-Za-z]:/.test(reference)
+      || reference.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+      throw new Error(`unsafe fixture reference ${JSON.stringify(reference)}`);
+    }
+    return reference.split("/");
+  };
+  const assertContained = (parent, candidate, label) => {
+    const relative = path.relative(parent, candidate);
+    if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+      throw new Error(`${label} escaped fixture root`);
+    }
+  };
+  const identity = ({ dev, ino }) => ({ dev, ino });
+  const sameIdentity = (left, right) => left.dev === right.dev && left.ino === right.ino;
+  const inspectSourceComponents = async (rootPath, segments) => {
+    let current = rootPath;
+    const snapshots = [];
+    for (const segment of segments) {
+      current = join(current, segment);
+      let metadata;
+      try {
+        metadata = await lstat(current, { bigint: true });
+      } catch (error) {
+        if (error.code === "ENOENT") throw new Error(`missing fixture source ${segments.join("/")}`);
+        throw error;
+      }
+      if (metadata.isSymbolicLink()) {
+        throw new Error(`symlinked fixture source ${segments.join("/")}`);
+      }
+      if (snapshots.length === segments.length - 1 && !metadata.isFile()) {
+        throw new Error(`fixture source is not a regular file ${segments.join("/")}`);
+      }
+      snapshots.push({ path: current, ...identity(metadata) });
+    }
+    return { path: current, snapshots };
+  };
+  const assertComponentIdentities = async (snapshots, label) => {
+    for (const snapshot of snapshots) {
+      const current = await lstat(snapshot.path, { bigint: true });
+      if (current.isSymbolicLink() || !sameIdentity(snapshot, current)) {
+        throw new Error(`${label} changed during copy`);
+      }
+    }
+  };
+  const prepareDestinationParent = async (rootPath, segments) => {
+    let current = rootPath;
+    const snapshots = [];
+    for (const segment of segments.slice(0, -1)) {
+      current = join(current, segment);
+      assertContained(rootPath, current, "fixture destination");
+      try {
+        const metadata = await lstat(current, { bigint: true });
+        if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+          throw new Error(`unsafe fixture destination parent ${segments.join("/")}`);
+        }
+        snapshots.push({ path: current, ...identity(metadata) });
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        await mkdir(current, { mode: 0o700 });
+        const metadata = await lstat(current, { bigint: true });
+        snapshots.push({ path: current, ...identity(metadata) });
+      }
+    }
+    return snapshots;
+  };
+  const copyFixtureReference = async (fromRoot, toRoot, reference) => {
+    const segments = assertSafeFixtureReference(reference);
+    const suppliedSourceRoot = await lstat(fromRoot, { bigint: true });
+    const suppliedDestinationRoot = await lstat(toRoot, { bigint: true });
+    if (suppliedSourceRoot.isSymbolicLink() || !suppliedSourceRoot.isDirectory()) {
+      throw new Error("unsafe fixture source root");
+    }
+    if (suppliedDestinationRoot.isSymbolicLink() || !suppliedDestinationRoot.isDirectory()) {
+      throw new Error("unsafe fixture destination root");
+    }
+    const resolvedFromRoot = await realpath(fromRoot);
+    const resolvedToRoot = await realpath(toRoot);
+    if (resolvedFromRoot !== sourceRoot) {
+      assertContained(resolvedRoot, resolvedFromRoot, "fixture source root");
+    }
+    if (resolvedToRoot !== resolvedRoot) {
+      assertContained(resolvedRoot, resolvedToRoot, "fixture destination root");
+    }
+    const destinationRootMetadata = await lstat(resolvedToRoot, { bigint: true });
+    if (!destinationRootMetadata.isDirectory()) {
+      throw new Error("unsafe fixture destination root");
+    }
+    const sourceInspection = await inspectSourceComponents(resolvedFromRoot, segments);
+    const resolvedSource = await realpath(sourceInspection.path);
+    assertContained(resolvedFromRoot, resolvedSource, "fixture source");
+    const validatedSource = sourceInspection.snapshots.at(-1);
+    const handle = await open(sourceInspection.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let bytes;
+    let before;
+    let after;
+    try {
+      before = await handle.stat({ bigint: true });
+      if (!before.isFile() || !sameIdentity(validatedSource, before)) {
+        throw new Error(`fixture source is not the validated regular file ${reference}`);
+      }
+      await assertComponentIdentities(sourceInspection.snapshots, `fixture source ${reference}`);
+      bytes = await handle.readFile();
+      after = await handle.stat({ bigint: true });
+      await assertComponentIdentities(sourceInspection.snapshots, `fixture source ${reference}`);
+    } finally {
+      await handle.close();
+    }
+    if (!after.isFile()
+      || before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs
+      || before.size !== BigInt(bytes.length)) {
+      throw new Error(`fixture source changed during copy ${reference}`);
+    }
+    const destinationParents = await prepareDestinationParent(resolvedToRoot, segments);
+    const destinationPath = join(resolvedToRoot, ...segments);
+    assertContained(resolvedToRoot, destinationPath, "fixture destination");
+    let destinationHandle;
+    try {
+      destinationHandle = await open(
+        destinationPath,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      );
+    } catch (error) {
+      if (["EEXIST", "ELOOP", "EISDIR"].includes(error.code)) {
+        throw new Error(`fixture destination already exists ${reference}`);
+      }
+      throw error;
+    }
+    try {
+      const openedDestination = await destinationHandle.stat({ bigint: true });
+      if (!openedDestination.isFile()) {
+        throw new Error(`fixture destination is not a regular file ${reference}`);
+      }
+      await destinationHandle.writeFile(bytes);
+    } finally {
+      await destinationHandle.close();
+    }
+    const currentDestinationRoot = await lstat(resolvedToRoot, { bigint: true });
+    if (!sameIdentity(destinationRootMetadata, currentDestinationRoot)) {
+      throw new Error(`fixture destination root changed during copy ${reference}`);
+    }
+    await assertComponentIdentities(destinationParents, `fixture destination ${reference}`);
+    const destinationMetadata = await lstat(destinationPath, { bigint: true });
+    if (destinationMetadata.isSymbolicLink() || !destinationMetadata.isFile()) {
+      throw new Error(`fixture destination is not a regular file ${reference}`);
+    }
+    const destinationBytes = await readFile(destinationPath);
+    const sourceDigest = digest(bytes);
+    const destinationDigest = digest(destinationBytes);
+    if (sourceDigest !== destinationDigest) throw new Error(`fixture copy digest mismatch ${reference}`);
+    return {
+      path: reference,
+      type: "file",
+      bytes: bytes.length,
+      sha256: sourceDigest,
+    };
+  };
+  const allowedItemKeys = new Set([
+    "id", "phase", "title", "status", "releaseBlocker", "owner", "reviewer",
+    "dependsOn", "controls", "acceptanceCriteria", "evidenceRequired", "evidence",
+    "references", "protocol", "verificationReviews", "authorityApproval",
+    "independenceLimitations", "residualRisks", "deviation", "issue", "sourceCommit",
+    "completedAt", "blocker",
+  ]);
+  const fixtureReferenceRecords = (item) => {
+    const records = [];
+    for (const reference of item.references ?? []) records.push({ kind: "reference", path: reference });
+    if (item.status === "complete") {
+      for (const evidence of item.evidence ?? []) records.push({ kind: "evidence", path: evidence });
+    }
+    for (const role of ["architecture", "verification"]) {
+      const pair = item.protocol?.[role];
+      if (pair && Object.keys(pair).some((key) => !["request", "response"].includes(key))) {
+        throw new Error(`unclassified fixture protocol field ${role}`);
+      }
+      for (const document of [pair?.request, pair?.response]) {
+        if (document && Object.keys(document).some((key) => ![
+          "id", "revision", "path", "sha256", "requestRevision", "decision",
+        ].includes(key))) {
+          throw new Error(`unclassified fixture protocol document field ${role}`);
+        }
+        if (document?.path) records.push({ kind: `protocol ${role}`, path: document.path });
+      }
+    }
+    return records;
+  };
+  const fixtureReferenceClosure = (candidate) => {
+    const references = new Set([
+      "package.json",
+      "package-lock.json",
+      "scripts/validate-production-plan.mjs",
+    ]);
+    for (const item of candidate.workItems ?? []) {
+      for (const key of Object.keys(item)) {
+        if (!allowedItemKeys.has(key)) throw new Error(`unclassified fixture item field ${key}`);
+      }
+      if (!active.has(item.status)) continue;
+      for (const record of fixtureReferenceRecords(item)) {
+        if (localReference(record.path)) references.add(record.path);
+      }
+    }
+    return [...references].sort();
+  };
+  const provisionFixture = async (fromRoot, toRoot, candidate) => {
+    const manifest = [];
+    for (const reference of fixtureReferenceClosure(candidate)) {
+      manifest.push(await copyFixtureReference(fromRoot, toRoot, reference));
+    }
+    const paths = manifest.map(({ path: reference }) => reference);
+    if (paths.length !== new Set(paths).size
+      || JSON.stringify(paths) !== JSON.stringify([...paths].sort())) {
+      throw new Error("fixture reference manifest is not sorted and de-duplicated");
+    }
+    return manifest;
+  };
   const cleanBaseEnv = () => {
     const env = { ...process.env };
     for (const key of [
@@ -595,6 +907,8 @@ async function runSelfTests() {
       "PRODUCTION_PLAN_BASE_REF",
       "PRODUCTION_PLAN_FIXTURE_MODE",
       "PRODUCTION_PLAN_SYNTHETIC_GIT_MODE",
+      "PRODUCTION_PLAN_SKIP_VARIANCE_MATRIX",
+      "PRODUCTION_PLAN_EMIT_CASE_INVENTORY",
     ]) delete env[key];
     return env;
   };
@@ -603,11 +917,10 @@ async function runSelfTests() {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
-  const prepareGitRepo = async (name, initialPlan = plan) => {
+  const prepareGitRepo = async (name, initialPlan = canonicalSeedPlan()) => {
     const repo = join(root, name);
-    await cp("docs/production-readiness", join(repo, "docs", "production-readiness"), { recursive: true });
-    await mkdir(join(repo, "scripts"), { recursive: true });
-    await cp(new URL(import.meta.url), join(repo, "scripts", "validate-production-plan.mjs"));
+    await mkdir(repo);
+    await provisionFixture(sourceRoot, repo, initialPlan);
     await writeFile(join(repo, "docs", "production-readiness", "plan.json"), `${JSON.stringify(initialPlan, null, 2)}\n`);
     await writeFile(join(repo, "package.json"), `${JSON.stringify(originalPackage, null, 2)}\n`);
     gitIn(repo, ["init", "-b", "main"]);
@@ -641,11 +954,273 @@ async function runSelfTests() {
     cases.push(name);
   };
   try {
-    await cp("docs/production-readiness", join(root, "docs", "production-readiness"), { recursive: true });
-    await mkdir(join(root, "scripts"), { recursive: true });
-    await cp(new URL(import.meta.url), scriptTarget);
+    await provisionFixture(sourceRoot, root, canonicalSeedPlan());
+    const expectCopyFailure = async (name, fromRoot, toRoot, reference, expected) => {
+      try {
+        await copyFixtureReference(fromRoot, toRoot, reference);
+        throw new Error(`${name}: unsafe fixture copy unexpectedly passed`);
+      } catch (error) {
+        if (!String(error.message).includes(expected)) {
+          throw new Error(`${name}: expected '${expected}', got '${error.message}'`);
+        }
+      }
+      cases.push(name);
+    };
+    const safetySource = join(root, "reference-safety-source");
+    await mkdir(safetySource);
+    await writeFile(join(safetySource, "valid.txt"), "fixture bytes\n");
+    await mkdir(join(safetySource, "directory"));
+    await mkdir(join(safetySource, "nested"));
+    await writeFile(join(safetySource, "nested", "valid.txt"), "nested fixture bytes\n");
+    await symlink("valid.txt", join(safetySource, "linked-file"));
+    await symlink("nested", join(safetySource, "linked-directory"));
+    const fifoPath = join(safetySource, "special-file");
+    execFileSync("mkfifo", [fifoPath]);
+
+    const safeDestination = join(root, "reference-safety-valid");
+    await mkdir(safeDestination);
+    const safeManifest = await copyFixtureReference(
+      safetySource,
+      safeDestination,
+      "valid.txt",
+    );
+    if (safeManifest.path !== "valid.txt"
+      || safeManifest.type !== "file"
+      || safeManifest.bytes !== 14
+      || safeManifest.sha256 !== digest("fixture bytes\n")) {
+      throw new Error(`safe fixture copy produced an invalid manifest`);
+    }
+    cases.push("safe fixture copy manifest");
+
+    const copyFailureCases = [
+      ["missing fixture source rejected", "missing.txt", "missing fixture source"],
+      ["absolute fixture source rejected", "/etc/passwd", "unsafe fixture reference"],
+      ["drive-prefixed fixture source rejected", "C:/outside", "unsafe fixture reference"],
+      ["traversal fixture source rejected", "../outside", "unsafe fixture reference"],
+      ["NUL fixture source rejected", "bad\0path", "unsafe fixture reference"],
+      ["non-normal fixture source rejected", "nested//valid.txt", "unsafe fixture reference"],
+      ["directory fixture source rejected", "directory", "not a regular file"],
+      ["special fixture source rejected", "special-file", "not a regular file"],
+      ["symlinked fixture file rejected", "linked-file", "symlinked fixture source"],
+      ["symlinked fixture component rejected", "linked-directory/valid.txt", "symlinked fixture source"],
+    ];
+    for (const [name, reference, expected] of copyFailureCases) {
+      const destination = join(root, `reference-safety-${cases.length}`);
+      await mkdir(destination);
+      await expectCopyFailure(name, safetySource, destination, reference, expected);
+    }
+
+    const overwriteDestination = join(root, "reference-safety-overwrite");
+    await mkdir(overwriteDestination);
+    await writeFile(join(overwriteDestination, "valid.txt"), "unexpected\n");
+    await expectCopyFailure(
+      "fixture destination overwrite rejected",
+      safetySource,
+      overwriteDestination,
+      "valid.txt",
+      "already exists",
+    );
+
+    const directoryDestination = join(root, "reference-safety-destination-directory");
+    await mkdir(directoryDestination);
+    await mkdir(join(directoryDestination, "valid.txt"));
+    await expectCopyFailure(
+      "wrong-type fixture destination rejected",
+      safetySource,
+      directoryDestination,
+      "valid.txt",
+      "already exists",
+    );
+
+    const symlinkDestination = join(root, "reference-safety-destination-symlink");
+    const destinationOutside = join(root, "reference-safety-destination-outside");
+    await mkdir(symlinkDestination);
+    await mkdir(destinationOutside);
+    await symlink(destinationOutside, join(symlinkDestination, "nested"));
+    await expectCopyFailure(
+      "symlinked fixture destination parent rejected",
+      safetySource,
+      symlinkDestination,
+      "nested/valid.txt",
+      "unsafe fixture destination parent",
+    );
+
+    for (const [name, parent, candidate, expected] of [
+      ["out-of-root fixture source rejected", safetySource, destinationOutside, "fixture source escaped fixture root"],
+      ["out-of-root fixture destination rejected", safeDestination, destinationOutside, "fixture destination escaped fixture root"],
+    ]) {
+      try {
+        assertContained(parent, candidate, name.includes("source") ? "fixture source" : "fixture destination");
+        throw new Error(`${name}: containment check unexpectedly passed`);
+      } catch (error) {
+        if (!String(error.message).includes(expected)) throw error;
+      }
+      cases.push(name);
+    }
+    try {
+      assertSafeFixtureReference("nested/../valid.txt");
+      throw new Error("fixture destination traversal unexpectedly passed");
+    } catch (error) {
+      if (!String(error.message).includes("unsafe fixture reference")) throw error;
+    }
+    cases.push("fixture destination traversal rejected");
+
+    const referencePlan = canonicalSeedPlan();
+    const referenceHk = fixtureHk(referencePlan);
+    setIncompleteState(referenceHk, "ready");
+    referenceHk.references = ["package-lock.json"];
+    const referenceRepo = join(root, "bridgepane-plan-fixtures-reference-validation");
+    await mkdir(referenceRepo);
+    const referenceManifest = await provisionFixture(sourceRoot, referenceRepo, referencePlan);
+    if (!referenceManifest.some(({ path: reference }) => reference === "package-lock.json")) {
+      throw new Error("active fixture reference closure omitted package-lock.json");
+    }
+    await writeFile(
+      join(referenceRepo, planPath),
+      `${JSON.stringify(referencePlan, null, 2)}\n`,
+    );
+    await writeFile(
+      join(referenceRepo, "package.json"),
+      `${JSON.stringify(originalPackage, null, 2)}\n`,
+    );
+    const referenceEnv = {
+      ...process.env,
+      PRODUCTION_PLAN_FIXTURE_MODE: "1",
+    };
+    delete referenceEnv.PRODUCTION_PLAN_BASE_FILE;
+    execFileSync(process.execPath, ["scripts/validate-production-plan.mjs"], {
+      cwd: referenceRepo,
+      env: referenceEnv,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    cases.push("provisioned active reference validates");
+    await rm(join(referenceRepo, "package-lock.json"));
+    try {
+      execFileSync(process.execPath, ["scripts/validate-production-plan.mjs"], {
+        cwd: referenceRepo,
+        env: referenceEnv,
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+      throw new Error("removed fixture reference unexpectedly passed");
+    } catch (error) {
+      const diagnostics = String(error.stderr ?? "")
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("- "))
+        .map((line) => line.slice(2));
+      const expected = ["HK-001 references missing local path package-lock.json"];
+      if (JSON.stringify(diagnostics) !== JSON.stringify(expected)) {
+        throw new Error(
+          `removed fixture reference expected ${JSON.stringify(expected)}, got ${JSON.stringify(diagnostics)}`,
+        );
+      }
+    }
+    cases.push("removed active reference fails normally");
+
+    const hermeticSource = join(root, "bridgepane-plan-fixtures-hermetic-source");
+    const hermeticDestination = join(root, "bridgepane-plan-fixtures-hermetic-destination");
+    await mkdir(hermeticSource);
+    await mkdir(hermeticDestination);
+    const hermeticPlan = canonicalSeedPlan();
+    await provisionFixture(sourceRoot, hermeticSource, hermeticPlan);
+    await writeFile(join(hermeticSource, planPath), `${JSON.stringify(hermeticPlan, null, 2)}\n`);
+    await writeFile(join(hermeticSource, "package.json"), `${JSON.stringify(originalPackage, null, 2)}\n`);
+    await provisionFixture(hermeticSource, hermeticDestination, hermeticPlan);
+    await writeFile(join(hermeticDestination, planPath), `${JSON.stringify(hermeticPlan, null, 2)}\n`);
+    await writeFile(join(hermeticDestination, "package.json"), `${JSON.stringify(originalPackage, null, 2)}\n`);
+    const resolvedHermeticSource = await realpath(hermeticSource);
+    assertContained(resolvedRoot, resolvedHermeticSource, "hermetic source");
+    await rm(resolvedHermeticSource, { recursive: true });
+    execFileSync(process.execPath, ["scripts/validate-production-plan.mjs"], {
+      cwd: hermeticDestination,
+      env: {
+        ...cleanBaseEnv(),
+        PRODUCTION_PLAN_FIXTURE_MODE: "1",
+        PRODUCTION_PLAN_SYNTHETIC_GIT_MODE: "1",
+      },
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    cases.push("provisioned fixture remains hermetic after source removal");
+
+    for (const id of ["CTL-001", "HK-001"]) {
+      for (const [kind, candidate] of [
+        ["missing", { workItems: [] }],
+        ["duplicate", { workItems: [{ id }, { id }] }],
+      ]) {
+        const name = `${kind} exact ${id} fixture ID rejected`;
+        try {
+          exactItem(candidate, id);
+          throw new Error(`${name}: exact-ID lookup unexpectedly passed`);
+        } catch (error) {
+          if (!String(error.message).includes(`fixture requires exactly one ${id}`)) {
+            throw error;
+          }
+        }
+        cases.push(name);
+      }
+    }
+
+    const unclassifiedPlan = canonicalSeedPlan();
+    fixtureHk(unclassifiedPlan).localFiles = ["package-lock.json"];
+    try {
+      fixtureReferenceClosure(unclassifiedPlan);
+      throw new Error("unclassified fixture field unexpectedly passed");
+    } catch (error) {
+      if (!String(error.message).includes("unclassified fixture item field localFiles")) throw error;
+    }
+    cases.push("new local-reference field fails closed");
+
+    for (const status of ["planned", "ready", "in_progress", "in_review", "complete"]) {
+      const projection = structuredClone(fixtureHk(canonicalSeedPlan()));
+      if (status === "complete") bindCompletion(projection, "9".repeat(40));
+      else setIncompleteState(projection, status);
+      const mustBeActive = active.has(status);
+      const hasActiveRecords = Boolean(
+        projection.protocol
+        && projection.verificationReviews?.length
+        && projection.authorityApproval
+        && projection.independenceLimitations?.length
+        && Array.isArray(projection.residualRisks),
+      );
+      if (projection.status !== status
+        || mustBeActive !== hasActiveRecords
+        || (status === "complete" && (
+          !projection.completedAt
+          || !projection.sourceCommit
+          || projection.reviewer !== "verifier-agent"
+        ))
+        || (status !== "complete" && (
+          projection.completedAt
+          || projection.sourceCommit
+          || projection.reviewer
+        ))) {
+        throw new Error(`${status} lifecycle projection is not explicit and schema-coupled`);
+      }
+      cases.push(`explicit ${status} lifecycle projection`);
+    }
+
+    const diagnosticsFrom = (stderr) => String(stderr ?? "")
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2));
+    const assertCompleteDiagnostics = (name, actual, expected) => {
+      const fragments = Array.isArray(expected) ? expected : [expected];
+      const unmatched = [...actual];
+      for (const fragment of fragments) {
+        const index = unmatched.findIndex((diagnostic) => diagnostic.includes(fragment));
+        if (index === -1) {
+          throw new Error(`${name}: missing diagnostic '${fragment}', got ${JSON.stringify(actual)}`);
+        }
+        unmatched.splice(index, 1);
+      }
+      if (unmatched.length || actual.length !== fragments.length) {
+        throw new Error(`${name}: unexpected diagnostics ${JSON.stringify(unmatched)}; all ${JSON.stringify(actual)}`);
+      }
+    };
     const runFailure = async (name, mutate, expected, options = {}) => {
-      const seed = options.seedStatus ? seedPlan(options.seedStatus) : plan;
+      const seed = options.seedStatus ? seedPlan(options.seedStatus) : canonicalSeedPlan();
       const candidate = structuredClone(seed);
       const base = structuredClone(seed);
       const packageJson = structuredClone(originalPackage);
@@ -661,13 +1236,39 @@ async function runSelfTests() {
         execFileSync(process.execPath, [scriptTarget], { cwd: root, env, encoding: "utf8", stdio: "pipe" });
         throw new Error(`${name}: validator unexpectedly passed`);
       } catch (error) {
-        const output = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
-        if (!output.includes(expected)) throw new Error(`${name}: expected '${expected}', got '${output.trim()}'`);
+        assertCompleteDiagnostics(name, diagnosticsFrom(error.stderr), expected);
+      }
+      cases.push(name);
+    };
+    const runExactFailure = async (name, mutate, expectedDiagnostics) => {
+      const candidate = canonicalSeedPlan();
+      const packageJson = structuredClone(originalPackage);
+      mutate(candidate);
+      await writeFile(planTarget, `${JSON.stringify(candidate, null, 2)}\n`);
+      await writeFile(packageTarget, `${JSON.stringify(packageJson, null, 2)}\n`);
+      const env = { ...process.env, PRODUCTION_PLAN_FIXTURE_MODE: "1" };
+      delete env.PRODUCTION_PLAN_BASE_FILE;
+      try {
+        execFileSync(process.execPath, [scriptTarget], {
+          cwd: root,
+          env,
+          encoding: "utf8",
+          stdio: "pipe",
+        });
+        throw new Error(`${name}: validator unexpectedly passed`);
+      } catch (error) {
+        const actual = diagnosticsFrom(error.stderr).sort();
+        const expected = [...expectedDiagnostics].sort();
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+          throw new Error(
+            `${name}: expected diagnostics ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+          );
+        }
       }
       cases.push(name);
     };
     const runSuccess = async (name, mutate, options = {}) => {
-      const seed = options.seedStatus ? seedPlan(options.seedStatus) : plan;
+      const seed = options.seedStatus ? seedPlan(options.seedStatus) : canonicalSeedPlan();
       const candidate = structuredClone(seed);
       const base = structuredClone(seed);
       const packageJson = structuredClone(originalPackage);
@@ -684,38 +1285,54 @@ async function runSelfTests() {
       cases.push(name);
     };
     await runFailure("stable blocker", (_p, pkg) => { pkg.version = "1.0.0"; }, "stable while blockers remain");
-    await runFailure("missing response", (p) => { delete p.workItems[0].protocol.architecture.response; }, "request and response");
-    await runFailure("stale response", (p) => { p.workItems[0].protocol.verification.response.requestRevision = "stale"; }, "stale request");
-    await runFailure("rejected response", (p) => { p.workItems[0].protocol.verification.response.decision = "rejected"; }, "response is not accepted");
-    await runFailure("missing request", (p) => { delete p.workItems[0].protocol.verification.request; }, "request and response");
-    await runFailure("missing response file", (p) => { p.workItems[0].protocol.verification.response.path = "docs/missing-response.md"; }, "path cannot be read");
-    await runFailure("invalid request revision", (p) => { p.workItems[0].protocol.architecture.request.revision = "main"; }, "revision must be a full commit SHA");
-    await runFailure("invalid response revision", (p) => { p.workItems[0].protocol.architecture.response.revision = "main"; }, "revision must be a full commit SHA");
-    await runFailure("response digest mismatch", (p) => { p.workItems[0].protocol.architecture.response.sha256 = "0".repeat(64); }, "working-tree digest does not match");
-    await runFailure("null verifier review", (p) => { p.workItems[0].verificationReviews = [null]; }, "must be an object");
-    await runFailure("wrong verifier role", (p) => { p.workItems[0].verificationReviews[0].role = "architect"; }, "role must be verifier-agent");
-    await runFailure("foreign verifier evidence", (p) => { p.workItems[0].verificationReviews[0].url = "https://github.com/o/r/commit/" + "a".repeat(40); }, "url must be immutable evidence");
+    await runFailure("missing response", (p) => { delete fixtureCtl(p).protocol.architecture.response; }, "request and response");
+    await runFailure("stale response", (p) => { fixtureCtl(p).protocol.verification.response.requestRevision = "stale"; }, "stale request");
+    await runFailure("rejected response", (p) => { fixtureCtl(p).protocol.verification.response.decision = "rejected"; }, "response is not accepted");
+    await runFailure("missing request", (p) => { delete fixtureCtl(p).protocol.verification.request; }, "request and response");
+    await runFailure("missing response file", (p) => { fixtureCtl(p).protocol.verification.response.path = "docs/missing-response.md"; }, "path cannot be read");
+    await runFailure("invalid request revision", (p) => { fixtureCtl(p).protocol.architecture.request.revision = "main"; }, [
+      "revision must be a full commit SHA",
+      "architecture response is bound to a stale request",
+    ]);
+    await runFailure("invalid response revision", (p) => { fixtureCtl(p).protocol.architecture.response.revision = "main"; }, "revision must be a full commit SHA");
+    await runFailure("response digest mismatch", (p) => { fixtureCtl(p).protocol.architecture.response.sha256 = "0".repeat(64); }, "working-tree digest does not match");
+    await runFailure("null verifier review", (p) => { fixtureCtl(p).verificationReviews = [null]; }, [
+      "must be an object", "completion is not bound to a verifier review",
+    ]);
+    await runFailure("wrong verifier role", (p) => { fixtureCtl(p).verificationReviews[0].role = "architect"; }, "role must be verifier-agent");
+    await runFailure("foreign verifier evidence", (p) => { fixtureCtl(p).verificationReviews[0].url = "https://github.com/o/r/commit/" + "a".repeat(40); }, "url must be immutable evidence");
     await runFailure("false human approval setting", (p) => { p.authorityModel.agentReviewsAreHumanApproval = true; }, "must not be represented as human approval");
     await runFailure("false owner decision setting", (p) => { p.authorityModel.ownerDecisionRequired = false; }, "owner decisions must remain required");
     await runFailure("false second-human setting", (p) => { p.authorityModel.independentHumanReviewRequired = true; }, "must not claim a second human");
     await runFailure("wrong agent roles", (p) => { p.authorityModel.requiredAgentRoles = ["implementer"]; }, "must be exactly architect");
-    await runFailure("completion missing date isolated", (p) => { bindCompletion(p.workItems[0]); delete p.workItems[0].completedAt; }, "without a YYYY-MM-DD completedAt value");
-    await runFailure("completion invalid source isolated", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].sourceCommit = "missing"; }, "without an exact source commit");
-    await runFailure("completion missing evidence isolated", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = []; }, "evidence must be a non-empty array");
-    await runFailure("completion missing immutable evidence isolated", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["docs/production-readiness/README.md"]; }, "without exact source-commit evidence");
-    await runFailure("completion missing source evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["https://github.com/itecob/bridgepane-linux/actions/runs/1"]; }, "without exact source-commit evidence");
-    await runFailure("completion mismatched review", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].verificationReviews.at(-1).reviewedCommit = "d".repeat(40); }, "not bound to a verifier review");
-    await runFailure("completion mismatched approval", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].authorityApproval.reviewedCommit = "d".repeat(40); }, "not bound to owner approval");
-    await runFailure("completion malformed evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence.push("../evidence"); }, "unsafe or mutable evidence");
-    await runFailure("completion foreign evidence", (p) => { bindCompletion(p.workItems[0]); p.workItems[0].evidence = ["https://github.com/o/r/commit/" + "c".repeat(40)]; }, "unsafe or mutable evidence");
-    await runFailure("mutated request", (p) => { p.workItems[0].protocol.architecture.request.revision = "changed"; p.workItems[0].protocol.architecture.response.requestRevision = "changed"; }, "mutates accepted protocol", { withBase: true });
+    await runFailure("completion missing date isolated", (p) => { bindCompletion(fixtureCtl(p)); delete fixtureCtl(p).completedAt; }, "without a YYYY-MM-DD completedAt value");
+    await runFailure("completion invalid source isolated", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).sourceCommit = "missing"; }, [
+      "without an exact source commit",
+      "without exact source-commit evidence",
+      "not bound to a verifier review of sourceCommit",
+      "not bound to owner approval of sourceCommit",
+    ]);
+    await runFailure("completion missing evidence isolated", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).evidence = []; }, [
+      "evidence must be a non-empty array", "without exact source-commit evidence",
+    ]);
+    await runFailure("completion missing immutable evidence isolated", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).evidence = ["docs/production-readiness/README.md"]; }, "without exact source-commit evidence");
+    await runFailure("completion missing source evidence", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).evidence = ["https://github.com/itecob/bridgepane-linux/actions/runs/1"]; }, "without exact source-commit evidence");
+    await runFailure("completion mismatched review", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).verificationReviews.at(-1).reviewedCommit = "d".repeat(40); }, "not bound to a verifier review");
+    await runFailure("completion mismatched approval", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).authorityApproval.reviewedCommit = "d".repeat(40); }, "not bound to owner approval");
+    await runFailure("completion malformed evidence", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).evidence.push("../evidence"); }, "unsafe or mutable evidence");
+    await runFailure("completion foreign evidence", (p) => { bindCompletion(fixtureCtl(p)); fixtureCtl(p).evidence = ["https://github.com/o/r/commit/" + "c".repeat(40)]; }, [
+      "without exact source-commit evidence", "unsafe or mutable evidence",
+    ]);
+    await runFailure("mutated request", (p) => { fixtureCtl(p).protocol.architecture.request.revision = "changed"; fixtureCtl(p).protocol.architecture.response.requestRevision = "changed"; }, [
+      "revision must be a full commit SHA", "mutates accepted protocol",
+    ], { withBase: true });
     await runFailure("removed verifier record", (p, _pkg, base) => {
       const { currentItem } = prepareTransition(p, base, "in_review", "in_review");
       currentItem.verificationReviews = [];
-    }, "removes accepted verificationReviews", { withBase: true });
+    }, ["verificationReviews must be a non-empty array", "removes accepted verificationReviews"], { withBase: true });
     await runFailure("mutated owner approval", (p, _pkg, base) => {
       const { currentItem } = prepareTransition(p, base, "in_review", "in_review");
-      currentItem.authorityApproval.date = "2026-07-27";
+      currentItem.authorityApproval.date = "2026-07-28";
     }, "mutates owner authority approval", { withBase: true });
     await runFailure("completed approval date mutation", (p, _pkg, base) => {
       const { currentItem } = prepareTransition(p, base, "complete", "complete");
@@ -728,7 +1345,7 @@ async function runSelfTests() {
     await runFailure("completed approval commit mutation", (p, _pkg, base) => {
       const { currentItem } = prepareTransition(p, base, "complete", "complete");
       currentItem.authorityApproval.reviewedCommit = "d".repeat(40);
-    }, "mutates owner authority approval", { withBase: true, seedStatus: "complete" });
+    }, ["not bound to owner approval of sourceCommit", "mutates owner authority approval"], { withBase: true, seedStatus: "complete" });
     await runFailure("completed package rebinding", (p, _pkg, base) => {
       const { currentItem } = prepareTransition(p, base, "complete", "complete");
       rebindCompletion(currentItem);
@@ -743,29 +1360,97 @@ async function runSelfTests() {
         (review) => review.reviewedCommit !== currentItem.sourceCommit,
       );
     }, "not bound to a verifier review", { withBase: true, seedStatus: "complete" });
-    await runFailure("unknown dependency", (p) => { p.workItems[0].dependsOn = ["BAD-999"]; }, "unknown dependency");
-    await runFailure("self dependency", (p) => { p.workItems[0].dependsOn = ["CTL-001"]; }, "depends on itself");
-    await runFailure("dependency cycle", (p) => { p.workItems[0].dependsOn = ["HK-001"]; p.workItems[1].dependsOn = ["CTL-001"]; }, "dependency cycle includes");
-    await runFailure("incomplete dependency", (p) => { p.workItems[0].dependsOn = ["HK-001"]; }, "while dependency HK-001 is planned");
-    await runFailure("unnamed owner", (p) => { p.workItems[0].owner = "unassigned"; }, "without one named accountable owner");
-    await runFailure("invalid completion", (p) => { p.workItems[0].status = "complete"; p.workItems[0].reviewer = "itecob"; }, "without a separate verifier role");
+    await runFailure("unknown dependency", (p) => { fixtureCtl(p).dependsOn = ["BAD-999"]; }, "unknown dependency");
+    await runFailure("self dependency", (p) => { fixtureCtl(p).dependsOn = ["CTL-001"]; }, [
+      "depends on itself", "dependency cycle includes CTL-001",
+    ]);
+    await runFailure("dependency cycle", (p) => {
+      bindCompletion(fixtureHk(p));
+      fixtureCtl(p).dependsOn = ["HK-001"];
+      fixtureHk(p).dependsOn = ["CTL-001"];
+    }, "dependency cycle includes");
+    const configureDependencyCase = (candidate, dependencyStatus, dependentStatus) => {
+      const dependency = fixtureHk(candidate);
+      const dependent = fixtureCtl(candidate);
+      dependency.dependsOn = [];
+      dependency.references = ["package-lock.json"];
+      if (dependencyStatus === "complete") bindCompletion(dependency, "f".repeat(40));
+      else setIncompleteState(dependency, dependencyStatus);
+      dependent.dependsOn = ["HK-001"];
+      if (dependentStatus === "complete") bindCompletion(dependent, "d".repeat(40));
+      else setIncompleteState(dependent, dependentStatus);
+    };
+    for (const dependencyStatus of ["planned", "ready"]) {
+      for (const dependentStatus of ["in_progress", "complete"]) {
+        const name = `${dependencyStatus} dependency blocks ${dependentStatus} dependent`;
+        await runExactFailure(name, (candidate) => {
+          configureDependencyCase(candidate, dependencyStatus, dependentStatus);
+        }, [
+          `CTL-001 is ${dependentStatus} while dependency HK-001 is ${dependencyStatus}`,
+        ]);
+      }
+    }
+    for (const dependentStatus of ["in_progress", "complete"]) {
+      await runSuccess(`complete dependency permits ${dependentStatus} dependent`, (candidate, base) => {
+        configureDependencyCase(candidate, "complete", dependentStatus);
+        configureDependencyCase(base, "complete", dependentStatus);
+      });
+    }
+    await runFailure("unnamed owner", (p) => { fixtureCtl(p).owner = "unassigned"; }, "without one named accountable owner");
+    await runFailure("invalid completion", (p) => { fixtureCtl(p).status = "complete"; fixtureCtl(p).reviewer = "itecob"; }, "without a separate verifier role");
     await runFailure("illegal transition", (p, _pkg, base) => {
       prepareTransition(p, base, "complete", "in_review");
     }, "illegal transition complete -> in_review", { withBase: true, seedStatus: "complete" });
-    await runFailure("weakened blocker", (p, _pkg, base) => { base.workItems[0].releaseBlocker = true; p.workItems[0].releaseBlocker = false; }, "weakens releaseBlocker", { withBase: true });
-    await runFailure("weakened criteria", (p, _pkg, base) => { base.workItems[0].acceptanceCriteria.push("must remain"); }, "weakens acceptanceCriteria", { withBase: true });
-    await runFailure("weakened evidence", (p, _pkg, base) => { base.workItems[0].evidenceRequired.push("must remain"); }, "weakens evidenceRequired", { withBase: true });
-    await runFailure("duplicate item", (p) => { p.workItems.push(structuredClone(p.workItems[0])); }, "duplicate work-item id");
-    await runFailure("duplicate phase", (p) => { p.phases.push(structuredClone(p.phases[0])); }, "duplicate phase id");
-    await runFailure("duplicate phase order", (p) => { p.phases[1].order = 0; }, "duplicate phase order");
-    await runFailure("missing local reference", (p) => { p.workItems[0].references = ["docs/missing.md"]; }, "references missing local path");
-    await runFailure("missing local evidence", (p) => { p.workItems[0].status = "complete"; p.workItems[0].reviewer = "verifier-agent"; p.workItems[0].completedAt = "2026-07-27"; p.workItems[0].sourceCommit = "a".repeat(40); p.workItems[0].evidence = ["docs/missing-evidence.md", "https://github.com/o/r/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]; }, "references missing local path");
-    await runFailure("unsafe path", (p) => { p.workItems[0].references = ["../outside"]; p.workItems[0].protocol.architecture.request.path = "../outside"; }, "is unsafe");
-    await runFailure("URL used as local reference", (p) => { p.workItems[0].references = ["https://example.com/doc"]; }, "unsafe local reference");
-    await runFailure("GOV-002 issue gate", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; }, "lacks exactly one repository tracking issue");
-    await runFailure("foreign issue URLs", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; p.workItems.forEach((item, index) => { item.issue = `https://github.com/o/r/issues/${index + 1}`; }); }, "repository tracking issue");
-    await runFailure("shared issue URL", (p) => { p.workItems.find(({ id }) => id === "GOV-002").status = "complete"; p.workItems.forEach((item) => { item.issue = "https://github.com/itecob/bridgepane-linux/issues/1"; }); }, "shares tracking issue");
-    await runFailure("earlier-phase blocker gate", (p) => { p.workItems.find(({ id }) => id === "SEC-001").status = "ready"; }, "ahead of earlier blockers");
+    await runFailure("weakened blocker", (p, _pkg, base) => { fixtureCtl(base).releaseBlocker = true; fixtureCtl(p).releaseBlocker = false; }, "weakens releaseBlocker", { withBase: true });
+    await runFailure("weakened criteria", (p, _pkg, base) => { fixtureCtl(base).acceptanceCriteria.push("must remain"); }, "weakens acceptanceCriteria", { withBase: true });
+    await runFailure("weakened evidence", (p, _pkg, base) => { fixtureCtl(base).evidenceRequired.push("must remain"); }, "weakens evidenceRequired", { withBase: true });
+    await runFailure("duplicate item", (p) => { p.workItems.push(structuredClone(fixtureCtl(p))); }, "duplicate work-item id");
+    await runFailure("duplicate phase", (p) => { p.phases.push(structuredClone(p.phases[0])); }, [
+      "duplicate phase id", "duplicate phase order",
+    ]);
+    await runFailure("duplicate phase order", (p) => { p.phases[1].order = 0; }, [
+      "duplicate phase order",
+      "found 2 at index 1",
+      "found 3 at index 2",
+      "found 4 at index 3",
+      "found 5 at index 4",
+      "found 6 at index 5",
+    ]);
+    await runFailure("missing local reference", (p) => { fixtureCtl(p).references = ["docs/missing.md"]; }, "references missing local path");
+    await runFailure("missing local evidence", (p) => { fixtureCtl(p).status = "complete"; fixtureCtl(p).reviewer = "verifier-agent"; fixtureCtl(p).completedAt = "2026-07-27"; fixtureCtl(p).sourceCommit = "a".repeat(40); fixtureCtl(p).evidence = ["docs/missing-evidence.md", "https://github.com/o/r/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]; }, [
+      "without exact source-commit evidence",
+      "not bound to owner approval of sourceCommit",
+      "references missing local path docs/missing-evidence.md",
+      "unsafe or mutable evidence",
+    ]);
+    await runFailure("unsafe path", (p) => { fixtureCtl(p).references = ["../outside"]; fixtureCtl(p).protocol.architecture.request.path = "../outside"; }, [
+      "architecture.request.path is unsafe", "unsafe local reference ../outside",
+    ]);
+    await runFailure("URL used as local reference", (p) => { fixtureCtl(p).references = ["https://example.com/doc"]; }, "unsafe local reference");
+    const assignUniqueIssues = (candidate) => candidate.workItems.forEach((item, index) => {
+      item.issue = `https://github.com/itecob/bridgepane-linux/issues/${index + 1}`;
+    });
+    await runFailure("GOV-002 issue gate", (p) => {
+      assignUniqueIssues(p);
+      const gov = exactItem(p, "GOV-002");
+      bindCompletion(gov);
+      delete gov.issue;
+    }, "GOV-002 lacks exactly one repository tracking issue");
+    await runFailure("foreign issue URLs", (p) => {
+      assignUniqueIssues(p);
+      const gov = exactItem(p, "GOV-002");
+      bindCompletion(gov);
+      gov.issue = "https://github.com/o/r/issues/1";
+    }, "GOV-002 lacks exactly one repository tracking issue");
+    await runFailure("shared issue URL", (p) => {
+      assignUniqueIssues(p);
+      const gov = exactItem(p, "GOV-002");
+      bindCompletion(gov);
+      gov.issue = exactItem(p, "CTL-001").issue;
+    }, "GOV-002 shares tracking issue");
+    await runFailure("earlier-phase blocker gate", (p) => {
+      setIncompleteState(exactItem(p, "SEC-001"), "ready");
+    }, "ahead of earlier blockers");
     const workflowCases = [
       ["mutable Action", "uses: actions/checkout@v4", {}, "mutable Action reference"],
       ["privileged PR", "permissions:\n  contents: write", { pullRequest: true }, "privileged capability"],
@@ -788,7 +1473,7 @@ async function runSelfTests() {
     }
 
     const completePlan = structuredClone(plan);
-    const ctl = completePlan.workItems[0];
+    const ctl = fixtureCtl(completePlan);
     completePlan.workItems.forEach((item, index) => {
       item.status = "complete";
       item.owner = "itecob";
@@ -927,7 +1612,7 @@ async function runSelfTests() {
     expectRepoFailure("invalid base ledger JSON", invalidLedger.repo, "Could not parse production-plan base");
 
     const strengthened = structuredClone(plan);
-    strengthened.workItems[0].acceptanceCriteria.push("fixture criterion must remain");
+    fixtureCtl(strengthened).acceptanceCriteria.push("fixture criterion must remain");
     const weakening = await prepareGitRepo("multi-commit-weakening", strengthened);
     gitIn(weakening.repo, ["switch", "-c", "feature"]);
     await writeFile(join(weakening.repo, planPath), `${JSON.stringify(plan, null, 2)}\n`);
@@ -946,8 +1631,79 @@ async function runSelfTests() {
     gitIn(ambiguous.repo, ["update-ref", "refs/remotes/origin/main", b2]);
     gitIn(ambiguous.repo, ["switch", "feature"]);
     expectRepoFailure("ambiguous local merge base", ambiguous.repo, "Expected exactly one merge base");
+
+    if (process.env.PRODUCTION_PLAN_SKIP_VARIANCE_MATRIX !== "1") {
+      const variants = [];
+      const plannedVariant = structuredClone(plan);
+      variants.push(["planned", plannedVariant]);
+      const readyVariant = structuredClone(plan);
+      const readyHk = fixtureHk(readyVariant);
+      setIncompleteState(readyHk, "ready");
+      readyHk.references = ["package-lock.json"];
+      variants.push(["ready", readyVariant]);
+      const completeVariant = structuredClone(plan);
+      const completeHk = fixtureHk(completeVariant);
+      bindCompletion(completeHk, "8".repeat(40));
+      completeHk.references = ["package-lock.json"];
+      variants.push(["complete", completeVariant]);
+
+      let expectedInventory = null;
+      for (const [status, variant] of variants) {
+        const variantRoot = join(
+          root,
+          `bridgepane-plan-fixtures-source-${status}`,
+        );
+        await mkdir(variantRoot);
+        await provisionFixture(sourceRoot, variantRoot, variant);
+        await writeFile(
+          join(variantRoot, planPath),
+          `${JSON.stringify(variant, null, 2)}\n`,
+        );
+        await writeFile(
+          join(variantRoot, "package.json"),
+          `${JSON.stringify(originalPackage, null, 2)}\n`,
+        );
+        const variantEnv = {
+          ...process.env,
+          PRODUCTION_PLAN_FIXTURE_MODE: "1",
+          PRODUCTION_PLAN_SKIP_VARIANCE_MATRIX: "1",
+          PRODUCTION_PLAN_EMIT_CASE_INVENTORY: "1",
+        };
+        delete variantEnv.PRODUCTION_PLAN_BASE_FILE;
+        delete variantEnv.PRODUCTION_PLAN_BASE_REF;
+        const output = execFileSync(
+          process.execPath,
+          ["scripts/validate-production-plan.mjs", "--self-test"],
+          {
+            cwd: variantRoot,
+            env: variantEnv,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        const match = output.match(/Production-plan case inventory: (\[[^\n]+\])/);
+        if (!match) throw new Error(`${status} source variance omitted case inventory`);
+        const inventory = JSON.parse(match[1]);
+        expectedInventory ??= inventory;
+        if (JSON.stringify(inventory) !== JSON.stringify(expectedInventory)) {
+          throw new Error(
+            `${status} source variance changed fixture inventory`,
+          );
+        }
+        cases.push(`full suite with source HK-001 ${status}`);
+      }
+    }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    const cleanupRoot = await realpath(root);
+    if (cleanupRoot !== resolvedRoot
+      || path.dirname(cleanupRoot) !== temporaryParent
+      || !path.basename(cleanupRoot).startsWith("bridgepane-plan-fixtures-")) {
+      throw new Error("refusing to clean an unverified fixture root");
+    }
+    await rm(cleanupRoot, { recursive: true });
+  }
+  if (process.env.PRODUCTION_PLAN_EMIT_CASE_INVENTORY === "1") {
+    console.log(`Production-plan case inventory: ${JSON.stringify(cases)}`);
   }
   console.log(`Production-plan fixtures passed: ${cases.length}`);
 }
