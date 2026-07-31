@@ -14,9 +14,17 @@
   `194af5593159fe09928896636e1eb95cc228adcabc7b8ebf39d85b48decfbf75`
 - **Owner protocol authorization:**
   https://github.com/itecob/bridgepane-linux/pull/11#issuecomment-5140048551
+- **Prior architecture response commit:**
+  `4790602c341647cfe4d0a912dacdb7b65947829e`
+- **Prior architecture response SHA-256:**
+  `805c0d77a76d849c33efe0b076041544b11ebdecf91e6516a59701a1d3255d20`
+- **Verification rejection commit:**
+  `0e83959b8e162ee6383df9c05ff493cc477eb3a5`
+- **Verification rejection SHA-256:**
+  `7445ec4e6a008f029449d625133a1896ca9476ed3469466e287fcfd8e778a7b6`
 - **Architect:** Codex independent architecture role
 - **Response date:** 2026-07-31
-- **Decision:** accept with exact controls
+- **Decision:** accept with exact controls, corrected after verification rejection
 - **Implementation authorized:** no
 
 ## Decision
@@ -32,6 +40,18 @@ a new authorization bound to the exact protocol head, response digests,
 accepted Stage A base, field-level target, and two permitted implementation
 paths.
 
+## Correction history
+
+Verification response `VRS-HK-001-B` at
+`0e83959b8e162ee6383df9c05ff493cc477eb3a5` rejected the prior response at
+`4790602c341647cfe4d0a912dacdb7b65947829e`. This revision adopts all three
+required corrections: base-explicit protocol, implementation, and full-lineage
+scopes; non-circular external binding of B1 and B2 identities; and base-aware
+rollback after activation. It supersedes every conflicting scope, evidence,
+and rollback clause in the prior response. The accepted HK-001, HANDOFF,
+BLD-005, BLD-001, date, gate, negative-case, and stable-release targets remain
+unchanged.
+
 The earlier uncommitted candidate is reproduction input only. Its bytes,
 patch, staging state, and evidence must not be used, deleted, or mutated by
 Stage B. Reconstruct the target from accepted head
@@ -42,8 +62,10 @@ Stage B. Reconstruct the target from accepted head
 ```text
 accepted Stage A evidence head d5b7af8
        |
-       +-- immutable Stage B requests
-       +-- accepted architecture/verification responses
+       +-- exactly four immutable Stage B protocol documents
+       v
+final protocol head P
+       |
        +-- owner preimplementation authorization
        v
 B1 atomic activation commit
@@ -68,33 +90,60 @@ exists before activation are one commit; they must never be separate. B2 does
 not retroactively authorize B1 and cannot repair an unauthorized activation.
 It records subsequent exact-head observations and acceptance.
 
-An evidence file cannot contain the Git commit that contains itself, nor its
-own final file digest. Do not use a placeholder, mutable branch, PR head, or
-fabricated hash. B1 evidence binds the accepted base, protocol commits and
-digests, preimplementation verifier record, owner authorization, target-file
-precommit digests, and cumulative patch digest. B2 records the immutable B1
-commit, B1 file/blob/patch digests, checks, verifier URL, and owner B1 decision.
-B2 itself is terminally bound by immutable post-publication verifier and owner
-comments naming the B2 commit and evidence SHA-256. No third evidence commit is
-created merely to record those terminal comments.
+An evidence file cannot contain any identity derived from bytes that include
+that same evidence file. Do not use a placeholder, proposed value, mutable
+branch, PR head, or fabricated hash. B1 records immutable inputs, the accepted
+Stage A evidence-prefix digest, the exact target `plan.json` digest, protocol
+and authorization records, commands, state, and the content specification. It
+does not embed its own commit, tree, evidence blob, final evidence-file digest,
+or any patch digest containing B1 evidence. After B1 exists, immutable verifier
+and owner comments externally bind exact B1, parent, tree, blobs, final file
+digests, and patch digest.
+
+B2 may record those already-existing B1 identities and comments plus B1
+exact-head results. B2 does not embed its own commit, tree, evidence blob, final
+evidence-file digest, or any patch digest containing B2 evidence. Immutable
+post-B2 verifier and owner comments terminally bind exact B2, parent, tree,
+evidence blob and SHA-256, B2 patch digest, corrected scopes, checks, residuals,
+and decision. No third evidence commit is created merely to record those
+terminal comments. An optional payload digest is permitted only for a separate
+immutable payload whose bytes do not contain that digest, and must never be
+described as the final evidence-file or patch digest.
 
 ## Exact implementation base and scope
 
 Both commits must descend without history rewriting from accepted Stage A
-evidence head `d5b7af809c77c65f9d1c92dd5e7d606ece0c673d` plus only the accepted
-Stage B protocol-document commits. Before editing, compare the production
-files to the accepted Stage A tree, not to the frozen candidate.
+evidence head `d5b7af809c77c65f9d1c92dd5e7d606ece0c673d` through the exact final
+protocol head, here named `P`. `P` is the commit containing the final accepted
+Stage B verification response and this corrected architecture response. Before
+editing, compare production files to the accepted Stage A tree and compare
+implementation scope to `P`; never compare to the frozen candidate.
 
-The cumulative Stage B diff from the accepted Stage A evidence head may name
-exactly:
+Every scope assertion names both endpoints:
+
+| Scope | Exact base and head | Exact paths |
+| --- | --- | --- |
+| Protocol delta | `d5b7af8..P` | the two Stage B request paths and two Stage B response paths only |
+| B1 commit scope | `B1^..B1` | `docs/production-readiness/plan.json` and `docs/production-readiness/evidence/HK-001.md` only |
+| B1 implementation delta | `P..B1` | plan and HK evidence only |
+| B1 full-lineage delta | `d5b7af8..B1` | four protocol paths plus plan and HK evidence only |
+| B2 commit scope | `B1..B2` | HK evidence only |
+| B2 implementation delta | `P..B2` | plan and HK evidence only |
+| B2 full-lineage delta | `d5b7af8..B2` | four protocol paths plus plan and HK evidence only |
+
+The four protocol paths are exactly the architecture request, verification
+request, architecture response, and verification response for HK-001 Stage B.
+The two implementation paths are exactly:
 
 - `docs/production-readiness/plan.json`; and
 - `docs/production-readiness/evidence/HK-001.md`.
 
-B1 changes both paths. B2 changes only the evidence path. No mode, rename,
-symlink, submodule, or binary replacement is permitted. Package, lockfile,
-workflow, dependency, product, local cleanup, Git ref, PR, branch, repository
-setting, and release state remain unchanged.
+B1 changes both implementation paths. B2 changes only evidence. A two-path
+assertion against the Stage A head and a six-path assertion against `P` are
+both invalid. No scope may contain an unexpected path, mode change, rename,
+symlink, submodule, binary replacement, or rewrite of a protocol document.
+Package, lockfile, workflow, dependency, product, local cleanup, Git ref, PR,
+branch, repository setting, and release state remain unchanged.
 
 The accepted Stage A evidence must be retained byte-for-byte as the prefix of
 the Stage B evidence file. Its historical SHA-256 remains
@@ -169,7 +218,11 @@ preimplementation owner decision: owner `itecob`, decision `accepted`, date in
 `YYYY-MM-DD`, `reviewedCommit` equal to the same protocol head, and its immutable
 repository comment URL. That owner comment must explicitly authorize B1's
 accepted base, exact two paths, field-level transformation, BLD-005 contract,
-HANDOFF-reference treatment, known risks, and prohibitions.
+HANDOFF-reference treatment, known risks, and prohibitions. It must also name
+final protocol head `P`, accept the four-path `d5b7af8..P` protocol delta, the
+two-path `P..B1` implementation delta, the six-path `d5b7af8..B1` full-lineage
+delta, the non-circular external-binding model, and the distinction between an
+unmerged Stage A-based revert and a post-activation forward rollback.
 
 Set `independenceLimitations` exactly to:
 
@@ -186,7 +239,7 @@ Set `residualRisks` to retain at least these distinct statements:
 - agent-process verifier separation is not independent-human review;
 - HANDOFF privacy, preservation, reconciliation, and cleanup obligations remain incomplete;
 - a private checkout path was historically disclosed publicly and cannot be erased by later file edits; and
-- evidence cannot embed the commit containing itself and therefore requires terminal external bindings.
+- neither evidence commit can embed identities derived from its own evidence bytes and both therefore require the defined external bindings.
 
 The preimplementation owner decision must explicitly accept or reject the
 irreversible historical-path disclosure risk required by the accepted HK
@@ -298,18 +351,22 @@ Append to the exact accepted Stage A evidence bytes:
 - frozen-candidate identities labeled unaccepted and unused;
 - implementation roles, process-only independence limitation, residual risks,
   and rollback/stop rules; and
-- pre-edit and precommit command results, complete diagnostics, candidate file
-  SHA-256 values, and cumulative binary-patch SHA-256.
+- pre-edit and precommit command results, complete diagnostics, the exact target
+  plan SHA-256, and a deterministic content specification for the evidence
+  appendix.
 
 The precommit evidence must not claim that B1 exists, passed exact-head CI, or
-was independently implementation-verified.
+was independently implementation-verified. It must not contain B1's final
+evidence SHA-256/blob, commit, tree, or any patch digest that includes the B1
+evidence file.
 
 ### B2 exact-head appendix
 
 After B1 exact-head verification and owner acceptance, append only:
 
 - exact B1 commit, parent, tree, two changed blob IDs, file SHA-256 values,
-  binary-patch digest, and cumulative two-file scope;
+  binary-patch digest, two-path B1 commit and implementation scopes, and
+  six-path B1 full-lineage scope;
 - legal-transition output against the accepted base;
 - complete direct-validator and 145-case self-test results and case inventory;
 - source-variance/reference-provisioning results;
@@ -320,13 +377,18 @@ After B1 exact-head verification and owner acceptance, append only:
 - production-audit zero and the separately reported 16-high full-graph result;
 - unchanged package, lockfile, workflow, dependency, and product identities;
 - stable-release rejection, deviations, stop-condition observations, and
-  residual-risk acceptance; and
-- B2 proposed file SHA-256 and patch digest, without claiming its future commit.
+  residual-risk acceptance.
+
+B2 records only identities that already existed at B1 and the immutable
+comments that bind them. It must not contain B2's final evidence SHA-256/blob,
+commit, tree, or any patch digest that includes the B2 evidence file.
 
 After B2 publication, the verifier and owner bind its exact commit and final
-evidence SHA-256 in immutable comments. Those comments are the terminal
-external evidence. They do not modify the plan's preimplementation
-`authorityApproval` and do not authorize HK completion.
+parent, tree, evidence blob and SHA-256, B2 patch digest, protocol,
+implementation, and full-lineage scopes, checks, limitations, risks, and
+decision in immutable comments. Those comments are the terminal external
+evidence. They do not modify the plan's preimplementation `authorityApproval`
+and do not authorize HK completion.
 
 ## Required sequence and gates
 
@@ -345,7 +407,9 @@ external evidence. They do not modify the plan's preimplementation
 4. Verify the accepted 145-case suite and Stage A exact-head evidence.
 5. Commit and independently accept this response and the Stage B verification
    response.
-6. Obtain the new owner preimplementation decision described above. Existing
+6. Name exact final protocol head `P` and prove `d5b7af8..P` contains exactly
+   the four protocol paths and no implementation path.
+7. Obtain the new owner preimplementation decision described above. Existing
    comment `5140048551` authorizes protocol documents only and is insufficient.
 
 ### B1 precommit
@@ -357,15 +421,18 @@ external evidence. They do not modify the plan's preimplementation
 4. Run direct validation, all 145 fixtures, and `npm run verify` without package
    installation or mutation beyond already available dependencies.
 5. Record full and production audits without concealing the known 16 highs.
-6. Confirm cumulative diff, modes, and binary patch name exactly two paths;
-   confirm package, lockfile, workflows, dependencies, product, refs, PRs,
-   settings, cleanup, and release state did not change.
+6. Confirm `B1^..B1` is planned to contain exactly the two implementation
+   paths, `P..candidate` contains exactly those two paths, and
+   `d5b7af8..candidate` contains exactly the four protocol plus two
+   implementation paths; confirm package, lockfile, workflows, dependencies,
+   product, refs, PRs, settings, cleanup, and release state did not change.
 7. Stop on any mismatch; otherwise commit both files atomically.
 
 ### B1 postcommit
 
-1. Recompute commit, parent, tree, blobs, file and patch digests, counts, and
-   cumulative scope.
+1. Recompute B1 commit, parent, tree, blobs, file and patch digests, counts,
+   `B1^..B1`, `P..B1`, and `d5b7af8..B1` scopes for the external verifier and
+   owner packets; do not insert those self-derived identities into B1 evidence.
 2. Rerun local gates from the exact commit.
 3. Run exact-head GitHub verify, dependency review, analyze, and CodeQL.
 4. A separate verifier inspects the actual diff, complete diagnostics,
@@ -376,13 +443,16 @@ external evidence. They do not modify the plan's preimplementation
 ### B2 publication and terminal gate
 
 1. Append the exact-head appendix; do not alter the B1 plan or prior evidence.
-2. Verify B2 cumulative scope still names only the two accepted paths and its
-   commit scope names evidence only.
+2. Verify `B1..B2` names evidence only, `P..B2` names exactly plan and evidence,
+   and `d5b7af8..B2` names exactly the four protocol plus two implementation
+   paths.
 3. Re-run direct validation, all fixtures, `npm run verify`, audits, and
    exact-head required checks for B2.
-4. A separate verifier posts a terminal decision naming exact B2 and final
-   evidence digest.
-5. The owner posts terminal acceptance or rejection naming the same identities.
+4. A separate verifier posts a terminal decision naming exact B2, parent, tree,
+   evidence blob and SHA-256, B2 patch digest, all three B2 scopes, exact-head
+   checks, limitations, residuals, and decision.
+5. The owner posts terminal acceptance or rejection naming the same identities,
+   scopes, checks, limitations, and residuals.
    Acceptance ends Stage B but leaves HK ready and incomplete.
 
 ## Verification matrix
@@ -390,7 +460,7 @@ external evidence. They do not modify the plan's preimplementation
 | Gate | Required observation |
 | --- | --- |
 | Base | Exact accepted Stage A head, plan/evidence/package/lock digests and source state |
-| Scope | B1 exactly two files; B2 evidence only; cumulative exactly two files |
+| Scope | `d5b7af8..P` exactly four protocol paths; `B1^..B1` and `P..B1` exactly two implementation paths; `B1..B2` evidence only; `P..B2` exactly two implementation paths; both full-lineage deltas exactly six paths |
 | Transition | Only legal HK `planned -> ready`; all complete diagnostic sets empty |
 | HK state | Unique HK ID, ready, owner-bound, incomplete, release-blocking, unchanged criteria |
 | Protocol | Exact request/response IDs, revisions, paths, digests, decisions and request bindings |
@@ -406,7 +476,7 @@ external evidence. They do not modify the plan's preimplementation
 | Audits | Production audit zero; 16 high full-graph build-tool findings explicitly remain open |
 | CI | Exact-head verify, dependency-review, analyze and CodeQL succeed for B1 and B2 |
 | Release | Product remains alpha and stable-release validation explicitly rejects publication |
-| Evidence | B1 and B2 appendices contain exact identities, outputs, limitations, deviations, risks and immutable external decisions |
+| Evidence | B1 contains immutable inputs and no B1 self-derived identity; B2 contains existing B1 identities and no B2 self-derived identity; external comments bind B1 and terminally bind B2 |
 
 Verification must explicitly reject HK `in_progress`, `in_review`, `complete`,
 non-blocking, ownerless, or assigned-reviewer state; missing or duplicate HK or
@@ -417,24 +487,57 @@ revisions/digests; mutable or foreign URLs; missing authority, limitation, or
 risk records; unsafe, absent, uncommitted, absolute, traversal, symlinked, or
 unprovisioned references; evidence-prefix rewrite; candidate-byte reuse;
 fixture inventory regression; hidden/reclassified audit findings; any third
-path or external mutation; stable product state; and any completion claim.
+implementation path, any seventh full-lineage path, any protocol rewrite or
+external mutation; a two-path assertion based on Stage A; a six-path assertion
+based on `P`; any B1 or B2 self commit/tree/blob/final evidence/patch digest;
+stable product state; and any completion claim.
 
 Every negative assertion compares the complete diagnostic set. Green CI alone
 is insufficient; the verifier reviews the field diff, graph, reference
 manifest, evidence prefix, and tested SHA.
 
-## Rollback
+## Base-aware rollback
 
-Before B1, rollback is no mutation: preserve and abandon the candidate after an
-owner decision. After B1 but before B2, rollback is a reviewed revert of B1,
-which atomically returns both plan and evidence to the Stage A state. After B2,
-rollback uses reviewed reverts in reverse order: B2 first, then B1. Recompute
-the base-aware validator and all invariants after each revert.
+Before B1, rollback is no repository mutation: preserve and abandon the
+candidate after an owner decision. A normal reviewed revert of B2 to the B1
+evidence state is permitted because B2 does not change the plan.
+
+A normal reviewed revert of B1 is permitted only on an unmerged activation
+lineage whose validator-selected base still contains the exact accepted Stage A
+ledger with HK-001 `planned`. Immediately before revert, record base-selection
+mode and exact selected base commit, prove that base contains the accepted Stage
+A plan, preview the reverse patch, and prove the resulting plan validates as
+`planned` against that selected base. If B2 exists, revert B2 first and B1
+second. Re-run all scope, prefix, transition, count, reference, package, audit,
+fixture, and stable-release checks after each reviewed revert.
+
+If B1, an equivalent activation, or any HK `ready` ledger is already contained
+in the validator-selected base, ordinary B1 reversion is prohibited. It would
+attempt illegal `ready -> planned`, remove governance records protected after
+activation, and rewrite accepted evidence meaning. Use a new architecture and
+verification request and a separate owner-authorized forward rollback that at
+minimum:
+
+- transitions HK-001 legally from `ready` to `blocked`;
+- supplies a precise blocker explanation;
+- preserves accepted protocol, verification-review, authority-approval,
+  independence-limitation, residual-risk, evidence-prefix, and external-comment
+  history;
+- records the rollback verifier and owner decisions without concealing B1/B2;
+  and
+- explicitly decides BLD-005 and the BLD-001 dependency edge.
+
+The fail-closed default after ready is in the selected base is to retain
+BLD-005 as a planned release blocker and retain BLD-005 in BLD-001's dependency
+list. Removing either requires separately accepted architecture proving why the
+work item and graph obligation are no longer required; it must not be an
+incidental effect of rollback. A later return to `planned` requires a separately
+accepted lifecycle/validator design that legally represents that transition.
 
 Never reset, clean, rewrite history, force-push, delete refs or branches, mutate
 the frozen candidate, broadly remove files, or use an evidence edit to disguise
-rollback. Remote comments remain audit history and must receive a correction
-comment if their authorized state is reverted.
+rollback. Remote comments remain audit history and receive immutable correction
+comments after any rollback.
 
 ## Stop conditions
 
@@ -442,6 +545,9 @@ Stop without broadening scope for any:
 
 - base, ancestry, request/response revision, digest, owner URL, or accepted
   Stage A evidence mismatch;
+- missing or ambiguous final protocol head, wrong scope base, wrong selected
+  validator base, or an attempted ordinary B1 revert after ready is in that
+  selected base;
 - missing/duplicate target ID, field, count, ordering, dependency, or protocol
   mismatch;
 - evidence prefix change or self-referential/placeholder identity;
